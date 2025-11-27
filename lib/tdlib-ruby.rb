@@ -16,7 +16,7 @@ module TD
   setting :encryption_key
 
   setting :client do
-    setting :api_id,                  constructor: ->(id) { id&.to_i }
+    setting :api_id, constructor: ->(id) { id&.to_i }
     setting :api_hash
     setting :use_test_dc,             default: false
     setting :database_directory,      default: "#{Dir.home}/.tdlib-ruby/db"
@@ -38,3 +38,9 @@ require 'tdlib/api'
 require 'tdlib/client'
 require 'tdlib/update_handler'
 require 'tdlib/update_manager'
+require 'tdlib/extension/hash_helper'
+require 'tdlib/extension/api_methods'
+require 'tdlib/extension/media_loader'
+require 'tdlib/extension/connection'
+require 'tdlib/extension/custom_update_handler'
+require 'tdlib/telegram_client'

@@ -11,12 +11,12 @@ module TD
       @td_error = td_error
     end
 
-    def method_missing(method, *args)
-      @td_error.public_send(method, *args)
+    def method_missing(method, *)
+      @td_error.public_send(method, *)
     end
 
-    def respond_to_missing?(*args)
-      @td_error.respond_to?(*args)
+    def respond_to_missing?(*)
+      @td_error.respond_to?(*)
     end
 
     def to_s

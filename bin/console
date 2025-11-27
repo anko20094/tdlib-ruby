@@ -6,8 +6,8 @@ require 'tdlib-ruby'
 TD.configure do |config|
   config.lib_path = File.join(File.expand_path("#{TD.root_path}/../"), 'td', 'build')
 
-  config.client.api_id = ENV['TD_API_ID']
-  config.client.api_hash = ENV['TD_API_HASH']
+  config.client.api_id = ENV.fetch('TD_API_ID', nil)
+  config.client.api_hash = ENV.fetch('TD_API_HASH', nil)
   config.client.use_test_dc = true
 end
 

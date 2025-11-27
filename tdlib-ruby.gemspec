@@ -31,4 +31,5 @@ Gem::Specification.new do |gem|
   gem.add_development_dependency 'rubygems-tasks', '~> 0.2'
   gem.add_development_dependency 'yard', '~> 0.9'
   gem.add_development_dependency 'pry', '~> 0.11'
+  gem.add_development_dependency 'rubocop', '~> 1.78'
 end

@@ -23,3 +23,11 @@ task :default => :spec
 require 'yard'
 YARD::Rake::YardocTask.new  
 task :doc => :yard
+
+
+require 'rubocop/rake_task'
+
+RuboCop::RakeTask.new(:rubocop) do |t|
+  t.patterns = ['lib/**/*.rb', 'spec/**/*.rb', 'Rakefile']
+  t.options = ['--format', 'simple']
+end

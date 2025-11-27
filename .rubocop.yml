@@ -1,0 +1,135 @@
+inherit_mode:
+  merge:
+    - Exclude
+
+# Core layout cops
+Layout/TrailingEmptyLines:
+  Enabled: true
+  EnforcedStyle: final_newline
+
+Layout/ExtraSpacing:
+  Enabled: true
+
+Layout/FirstArrayElementLineBreak:
+  Enabled: true
+  Description: >-
+    Checks for a line break before the first element in a
+    multi-line array.
+
+Layout/FirstHashElementLineBreak:
+  Enabled: true
+  Description: >-
+    Checks for a line break before the first element in a
+    multi-line hash.
+
+Layout/HashAlignment:
+  Enabled: true
+
+Layout/LineLength:
+  Max: 120
+
+# Linting
+Lint/MissingSuper:
+  Enabled: false
+
+Lint/Debugger:
+  Description: 'Check for debugger calls.'
+  Enabled: true
+  Severity: 'fatal'
+
+# Style cops
+Style/UnlessElse:
+  Enabled: true
+
+Style/UnlessLogicalOperators:
+  Enabled: true
+
+Style/IfUnlessModifier:
+  Enabled: false
+
+Style/CollectionMethods:
+  Description: 'Preferred collection methods.'
+  StyleGuide: '#map-find-select-reduce-size'
+  Enabled: true
+
+Style/GuardClause:
+  Enabled: false
+
+Style/RescueModifier:
+  Enabled: false
+
+Style/ImplicitRuntimeError:
+  Description: >-
+    Use `raise` or `fail` with an explicit exception class and
+    message, rather than just a message.
+  Enabled: true
+
+Style/MethodCalledOnDoEndBlock:
+  Description: 'Avoid chaining a method call on a do...end block.'
+  StyleGuide: '#single-line-blocks'
+  Enabled: true
+
+Style/Send:
+  Description: 'Prefer `Object#__send__` or `Object#public_send` to `send`, as `send` may overlap with existing methods.'
+  StyleGuide: '#prefer-public-send'
+  Enabled: true
+
+Style/BlockDelimiters:
+  AllowedMethods: []
+
+# Bundler
+Bundler/DuplicatedGem:
+  Enabled: true
+  Include:
+    - '**/Gemfile'
+    - '**/gems.rb'
+    - '**/.overcommit_gems'
+
+# Metrics
+Metrics/BlockLength:
+  Description: 'Avoid long blocks with many lines.'
+  Enabled: true
+  Exclude:
+    - 'Rakefile'
+    - '**/*.rake'
+    - 'config/routes.rb'
+
+Metrics/MethodLength:
+  Max: 45
+
+Metrics/PerceivedComplexity:
+  Max: 15
+
+Metrics/CyclomaticComplexity:
+  Max: 15
+
+Metrics/AbcSize:
+  Max: 45
+
+Metrics/ModuleLength:
+  Max: 250
+
+Metrics/ClassLength:
+  Max: 250
+
+Metrics/CollectionLiteralLength: {}
+
+# Disabled or non-applicable cops for a gem (keep minimal)
+Style/Encoding:
+  Enabled: false
+
+Style/Documentation:
+  Enabled: false
+
+Style/FrozenStringLiteralComment:
+  Enabled: false
+
+# Global configuration
+AllCops:
+  NewCops: enable
+  Include:
+    - 'lib/**/*'
+  Exclude:
+    - 'bin/**/*'
+    - 'lib/tdlib-ruby.rb'
+    - 'lib/tdlib/api.rb'
