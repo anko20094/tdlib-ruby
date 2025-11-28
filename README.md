@@ -1,6 +1,6 @@
 # tdlib-ruby
 
-[![Maintainability](https://api.codeclimate.com/v1/badges/9362ca2682b7edbae205/maintainability)](https://codeclimate.com/github/centosadmin/tdlib-ruby/maintainability) [![Build Status](https://travis-ci.org/southbridgeio/tdlib-ruby.svg?branch=master)](https://travis-ci.org/centosadmin/tdlib-ruby)
+![CodeRabbit Pull Request Reviews](https://img.shields.io/coderabbit/prs/github/anko20094/tdlib-ruby?utm_source=oss&utm_medium=github&utm_campaign=anko20094%2Ftdlib-ruby&labelColor=171717&color=FF570A&link=https%3A%2F%2Fcoderabbit.ai&label=CodeRabbit+Reviews) [![Maintainability](https://api.codeclimate.com/v1/badges/9362ca2682b7edbae205/maintainability)](https://codeclimate.com/github/centosadmin/tdlib-ruby/maintainability) [![Build Status](https://travis-ci.org/southbridgeio/tdlib-ruby.svg?branch=master)](https://travis-ci.org/centosadmin/tdlib-ruby)
 
 ## Description
 
@@ -373,4 +373,3 @@ TD.configure do |c|
   c.client.use_message_database = true
 end
 ```
-
