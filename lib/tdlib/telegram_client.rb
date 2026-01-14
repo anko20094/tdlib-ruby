@@ -7,18 +7,20 @@ module TD
     include TD::Extension::Connection
     prepend TD::Extension::CustomUpdateHandler
 
-    attr_reader :auth_ready, :client
+    attr_reader :auth_ready, :client, :phone, :media_directory
 
     def initialize(params)
       @client = nil
       @auth_state = :initializing
       @phone = params[:phone] || ''
-      @media_directory = params[:media_directory] || './tdlib_media'
+      @media_directory = params[:files_directory] || './tdlib_media'
       @auth_ready = false
 
       setup_directories
 
-      @client = TD::Client.new
+      @client = TD::Client.new(database_directory: params[:database_directory] || './tdlib_database',
+                               files_directory: params[:files_directory] || './tdlib_files')
+
       setup_handlers
     end
 

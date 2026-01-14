@@ -8,8 +8,15 @@ module TD
         if file.is_a?(TD::Types::File) && file.local&.is_downloading_completed
           src = file.local.path
           if src && File.exist?(src)
-            FileUtils.mkdir_p(dest_dir)
-            dst = File.join(dest_dir, File.basename(src))
+            # If `dest_dir` contains a filename (has an extension) treat it as the final path,
+            # otherwise treat it as a directory.
+            if File.extname(dest_dir) && !File.extname(dest_dir).empty?
+              dst = dest_dir
+              FileUtils.mkdir_p(File.dirname(dst))
+            else
+              FileUtils.mkdir_p(dest_dir)
+              dst = File.join(dest_dir, File.basename(src))
+            end
 
             begin
               FileUtils.mv(src, dst)

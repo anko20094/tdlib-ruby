@@ -1,6 +1,13 @@
 module TD
   module Extension
     module CustomUpdateHandler
+      def initialize(params)
+        @media_buffer = {}
+        @media_mutex = Mutex.new
+
+        super
+      end
+
       def subscribe_channel_posts(client)
         client.on(TD::Types::Update) do |update|
           handler = handlers[update.class]
@@ -46,21 +53,52 @@ module TD
 
         return if unread_count <= 0
 
-        # from_message_id: 0, offset: 0 — це ЗАВЖДИ повертає найновіші повідомлення.
-        # Ніяких last_read + 1.
-        # Found strange anomaly (when tried to pass 0 as from_message_id):
-        # when from_message_id = 0 returned only last message (was only on local test)!!!!!
         messages = channel_messages(chat_id, 0, unread_count)
 
         return if messages.empty?
 
-        newest_message = messages.first
-        newest_id = HashHelper.get_unknown_structure_data(newest_message, 'id')
-
+        newest_id = HashHelper.get_unknown_structure_data(messages.first, 'id')
         read_messages(chat_id, [newest_id])
-        message_sending(messages)
-      rescue StandardError => e
-        puts "❌ Error: #{e.message}"
+
+        messages.each do |msg|
+          group_id = HashHelper.get_unknown_structure_data(msg, 'media_album_id').to_i
+
+          if group_id > 0
+            enqueue_media_group(group_id, msg)
+          else
+            message_sending([msg])
+          end
+        end
+
+      end
+
+      def enqueue_media_group(group_id, msg)
+        @media_mutex.synchronize do
+          @media_buffer[group_id] ||= { messages: [], timer: nil }
+
+          # Додаємо повідомлення (захист від дублікатів)
+          unless @media_buffer[group_id][:messages].any? { |m| HashHelper.get_unknown_structure_data(m, 'id') == HashHelper.get_unknown_structure_data(msg, 'id') }
+            @media_buffer[group_id][:messages] << msg
+          end
+
+          # Перезапускаємо таймер очікування решти частин (напр. 600 мс)
+          @media_buffer[group_id][:timer]&.kill
+          @media_buffer[group_id][:timer] = Thread.new do
+            sleep 1
+            flush_media_group(group_id)
+          end
+        end
+      end
+
+      def flush_media_group(group_id)
+        data = nil
+        @media_mutex.synchronize do
+          data = @media_buffer.delete(group_id)
+        end
+
+        if data && data[:messages].any?
+          message_sending(data[:messages])
+        end
       end
 
       def message_sending(messages)

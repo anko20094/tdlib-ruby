@@ -8,9 +8,6 @@ module TD
         link = raw_link.to_s.strip
 
         subscribe_by_message_link(link) || subscribe_by_username_link(link) || subscribe_by_invite_link(link)
-      rescue StandardError => e
-        puts "❌ Error during subscribe_to_link: #{e.class} - #{e.message}"
-        nil
       end
 
       def chat_ids(limit = 1000)
@@ -30,10 +27,6 @@ module TD
         res = @client.get_chat_history(chat_id:, from_message_id:, limit:, offset:, only_local: false).value!(15)
 
         HashHelper.get_unknown_structure_data(res, 'messages') || []
-      rescue StandardError => e
-        puts "❌ Error fetching messages: #{e.class} - #{e.message}"
-
-        []
       end
 
       def read_messages(chat_id, message_ids)
@@ -110,7 +103,7 @@ module TD
 
         messages.each do |m|
           album_id = (m['media_album_id'] || m.dig('media', 'album_id')).to_s
-          if album_id && !album_id.empty?
+          if album_id && !album_id.empty? && album_id != '0'
             album_map[album_id] ||= []
             unless seen[album_id]
               result << album_map[album_id]
@@ -156,9 +149,16 @@ module TD
       rescue TD::Error => e
         puts "❌ TDLib Error: #{e.message}"
         []
-      rescue StandardError => e
-        puts "❌ Ruby Error: #{e.class} - #{e.message}"
-        []
+      end
+
+      def sort_by_id(messages)
+        messages.map do |entry|
+          if entry.is_a?(Array)
+            entry.sort_by { |msg| (msg['id'] || msg['message_id'] || msg.dig('message', 'id') || 0).to_i }
+          else
+            entry
+          end
+        end
       end
 
       private
@@ -177,15 +177,11 @@ module TD
         return {} unless logged_in?
 
         @client.get_chat(chat_id:).value!(15)
-      rescue StandardError => e
-        puts "❌ Error fetching chat: #{e.class} - #{e.message}"
-        nil
       end
 
       def get_chat_full_info(chat_id)
         return 0 unless logged_in?
 
-        # КРОК 1: Отримуємо об'єкт чату, щоб дізнатись його тип і внутрішній ID
         chat = @client.get_chat(chat_id: chat_id).value!
 
         case HashHelper.get_unknown_structure_data(chat, 'type')
@@ -202,18 +198,12 @@ module TD
         else
           2
         end
-      rescue StandardError => e
-        puts "❌ Не вдалося отримати кількість підписників: #{e.message}"
-        0
       end
 
       def get_message(chat_id, message_id)
         return {} unless logged_in?
 
         @client.get_message(chat_id:, message_id:).value!(15)
-      rescue StandardError => e
-        puts "❌ Error fetching message: #{e.class} - #{e.message}"
-        nil
       end
 
       def subscribe_by_message_link(link)
@@ -223,9 +213,6 @@ module TD
 
           @client.join_chat(chat_id:).value!(20)
         end
-      rescue StandardError => e
-        puts "❌ Error in subscribe_by_message_link: #{e.message}"
-        nil
       end
 
       def subscribe_by_username_link(link)
@@ -239,9 +226,6 @@ module TD
           @client.join_chat(chat_id: id).value!(20)
         end
         nil
-      rescue StandardError => e
-        puts "❌ Error in subscribe_by_username_link: #{e.message}"
-        nil
       end
 
       def subscribe_by_invite_link(link)
@@ -254,9 +238,6 @@ module TD
 
           @client.join_chat_by_invite_link(invite_link:).value!(20)
         end
-      rescue StandardError => e
-        puts "❌ Error in subscribe_by_invite_link: #{e.message}"
-        nil
       end
 
       def logged_in?
