@@ -15,6 +15,7 @@ module TD
       @phone = params[:phone] || ''
       @media_directory = params[:files_directory] || './tdlib_media'
       @auth_ready = false
+      @by_qr = params[:by_qr] || false
 
       setup_directories
 
@@ -30,7 +31,7 @@ module TD
       puts '➡️ [CLIENT] Успішно підключено. Очікуємо авторизації...'
 
       while @client.alive? && !@auth_ready
-        process_auth_state
+        process_auth_state(by_qr: @by_qr)
         sleep 0.1
       end
 

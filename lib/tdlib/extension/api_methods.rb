@@ -8,6 +8,29 @@ module TD
         link = raw_link.to_s.strip
 
         subscribe_by_message_link(link) || subscribe_by_username_link(link) || subscribe_by_invite_link(link)
+      rescue TD::Error => e
+        if e.message&.include?('USER_ALREADY_PARTICIPANT')
+          return resolve_already_subscribed_chat(link)
+        end
+
+        raise
+      end
+
+      def resolve_already_subscribed_chat(link)
+          chat_id = resolve_chat_id(link)
+
+          if chat_id.nil? && (m = link.match(%r{t\.me/c/(\d+)/\d+}))
+            short_id = m[1].to_i
+            chat_id = -100_000_000_000 + short_id
+          end
+
+          if chat_id.nil? && (m2 = link.match(%r{(?:t\.me/joinchat/|t\.me/\+|tg://join\?invite=)([A-Za-z0-9_-]+)}))
+            invite_link = link.include?('http') ? link : "https://t.me/joinchat/#{m2[1]}"
+            info = @client.check_chat_invite_link(invite_link: invite_link).value!(15) rescue nil
+            chat_id = HashHelper.get_unknown_structure_data(info, 'chat_id') || HashHelper.get_unknown_structure_data(info, 'id') rescue nil
+          end
+
+          return chat_id ? get_chat(chat_id) : nil
       end
 
       def chat_ids(limit = 1000)
@@ -171,6 +194,8 @@ module TD
         res = @client.search_public_chat(username:).value!(10)
 
         HashHelper.get_unknown_structure_data(res, 'id')
+      rescue TD::Error => e
+        return nil if e.message&.include?('USERNAME_INVALID')
       end
 
       def get_chat(chat_id)
@@ -246,16 +271,6 @@ module TD
           return false
         end
         true
-      end
-
-      def sort_by_id(messages)
-        messages.map do |entry|
-          if entry.is_a?(Array)
-            entry.sort_by { |msg| (msg['id'] || msg['message_id'] || msg.dig('message', 'id') || 0).to_i }
-          else
-            entry
-          end
-        end
       end
     end
   end

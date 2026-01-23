@@ -27,20 +27,61 @@ module TD
         end
       end
 
-      def process_auth_state
+      def process_auth_state(by_qr: false)
         current_state = @auth_state
         @auth_state = nil
         return unless current_state
 
         case current_state
         when :wait_phone_number
-          handle_phone_number
+          if by_qr
+            handle_qr_login
+          else
+            handle_phone_number
+          end
+        when :wait_other_device_confirmation
+          puts "⏳ Очікування сканування QR-коду..."
         when :wait_code
           handle_code
         when :wait_password
           handle_password
+        when :ready
+          puts "✅ Авторизація успішна!"
         else
-          puts "   ⚠️ Неочікуваний auth_state: #{current_state}"
+          puts "⚠️ Неочікуваний auth_state: #{current_state}"
+        end
+      end
+
+      private
+
+      def handle_qr_login
+        puts "\n========================================"
+        puts "🚀 Запуск входу через QR-код"
+        puts "========================================"
+        @client.request_qr_code_authentication(other_user_ids: [])
+
+        sleep 4
+
+        begin
+          auth_state = @client.get_authorization_state.value!
+
+          if auth_state.respond_to?(:link)
+            link = auth_state.link
+
+            puts "\n🔗 ПОСИЛАННЯ (Дійсне 30 сек):"
+            puts link
+            puts "\n📸 Скануйте QR нижче:"
+            if system("which qrencode > /dev/null 2>&1")
+              system("qrencode -t ANSIUTF8 '#{link}'")
+            else
+              puts "❌ Утиліта 'qrencode' не знайдена. Встановіть її: sudo apt install qrencode"
+              puts "Або відкрийте посилання вище в генераторі QR."
+            end
+          else
+            puts "⚠️  Посилання ще не готове. Стан: #{auth_state.class}"
+          end
+        rescue => e
+          puts "❌ Помилка при отриманні QR: #{e.message}"
         end
       end
 
