@@ -2,14 +2,12 @@ module TD
   module Extension
     module MediaLoader
       # Works only after we fetch this message
-      def download_file(file_id, dest_dir: @media_directory, timeout: 30)
+      def download_file(file_id, dest_dir: @media_directory, timeout: 60)
         file = @client.download_file(file_id: file_id, priority: 1, offset: 0, limit: 0,
                                      synchronous: true).value!(timeout)
         if file.is_a?(TD::Types::File) && file.local&.is_downloading_completed
           src = file.local.path
           if src && File.exist?(src)
-            # If `dest_dir` contains a filename (has an extension) treat it as the final path,
-            # otherwise treat it as a directory.
             if File.extname(dest_dir) && !File.extname(dest_dir).empty?
               dst = dest_dir
               FileUtils.mkdir_p(File.dirname(dst))
@@ -23,6 +21,13 @@ module TD
             rescue StandardError
               FileUtils.cp(src, dst)
             end
+
+            begin
+              File.chmod(0666, dst)
+            rescue StandardError => e
+              puts "⚠️ Не вдалося змінити права файлу: #{e.message}"
+            end
+
             return dst
           end
         end

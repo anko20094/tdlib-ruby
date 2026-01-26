@@ -7,7 +7,8 @@ module TD
 
         link = raw_link.to_s.strip
 
-        subscribe_by_message_link(link) || subscribe_by_username_link(link) || subscribe_by_invite_link(link)
+        subscribe_by_message_link(link) || subscribe_by_username_link(link) || subscribe_by_invite_link(link) ||
+          subscribe_by_channel_name(link)
       rescue TD::Error => e
         if e.message&.include?('USER_ALREADY_PARTICIPANT')
           return resolve_already_subscribed_chat(link)
@@ -263,6 +264,23 @@ module TD
 
           @client.join_chat_by_invite_link(invite_link:).value!(20)
         end
+      end
+
+      def subscribe_by_channel_name(username)
+        clean_username = username.gsub('@', '').strip
+        return nil if clean_username.include?('/') || clean_username.empty?
+
+        chat = begin
+                 @client.search_public_chat(username: clean_username).value!
+               rescue TD::Error
+                 nil
+               end
+
+        return nil unless chat
+
+        @client.join_chat(chat_id: HashHelper.get_unknown_structure_data(chat, 'id')).value!
+
+        chat
       end
 
       def logged_in?
