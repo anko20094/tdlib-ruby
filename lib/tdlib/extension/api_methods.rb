@@ -2,8 +2,10 @@ require_relative 'hash_helper'
 module TD
   module Extension
     module ApiMethods
+      CHAT_ID_OFFSET = -1_000_000_000_000.freeze
+
       def subscribe_to_link(raw_link)
-        return unless logged_in?
+        return if logged_out?
 
         link = raw_link.to_s.strip
 
@@ -22,20 +24,22 @@ module TD
 
           if chat_id.nil? && (m = link.match(%r{t\.me/c/(\d+)/\d+}))
             short_id = m[1].to_i
-            chat_id = -100_000_000_000 + short_id
+            chat_id = CHAT_ID_OFFSET - short_id
           end
 
-          if chat_id.nil? && (m2 = link.match(%r{(?:t\.me/joinchat/|t\.me/\+|tg://join\?invite=)([A-Za-z0-9_-]+)}))
-            invite_link = link.include?('http') ? link : "https://t.me/joinchat/#{m2[1]}"
-            info = @client.check_chat_invite_link(invite_link: invite_link).value!(15) rescue nil
-            chat_id = HashHelper.get_unknown_structure_data(info, 'chat_id') || HashHelper.get_unknown_structure_data(info, 'id') rescue nil
+          invite_code = link.match(%r{(?:t\.me/joinchat/|t\.me/\+|tg://join\?invite=)([A-Za-z0-9_-]+)})
+          if chat_id.nil? && invite_code.present?
+            invite_link = link.include?('http') ? link : "https://t.me/joinchat/#{invite_code[1]}"
+            info = @client.check_chat_invite_link(invite_link: invite_link).value!(15)
+            chat_id = HashHelper.get_unknown_structure_data(info, 'chat_id') ||
+                      HashHelper.get_unknown_structure_data(info, 'id')
           end
 
-          return chat_id ? get_chat(chat_id) : nil
+          chat_id ? get_chat(chat_id) : nil
       end
 
       def chat_ids(limit = 1000)
-        return [] unless logged_in?
+        return [] if logged_out?
 
         res =  @client.get_chats(chat_list: { '@type' => 'chatListMain' }, limit:).value!(15)
         HashHelper.get_unknown_structure_data(res, 'chat_ids')
@@ -46,7 +50,7 @@ module TD
       end
 
       def channel_messages(chat_id, from_message_id = 0, limit = 99, offset = 0)
-        return [] unless logged_in?
+        return [] if logged_out?
 
         res = @client.get_chat_history(chat_id:, from_message_id:, limit:, offset:, only_local: false).value!(15)
 
@@ -54,12 +58,12 @@ module TD
       end
 
       def read_messages(chat_id, message_ids)
-        @client.open_chat(chat_id:).value! # should check if this is needed
+        @client.open_chat(chat_id:).value!
         @client.view_messages(chat_id:, message_ids:, force_read: true, source: nil).value!
       end
 
       def start_chat_with_bot(bot)
-        return unless logged_in?
+        return if logged_out?
 
         chat_id = resolve_chat_id(bot)
         return if chat_id.blank?
@@ -91,7 +95,7 @@ module TD
       end
 
       def forward_messages_to_bot(bot, from_chat_id, message_ids)
-        return unless logged_in?
+        return if logged_out?
 
         bot_chat_id = resolve_chat_id(bot)
         return if bot_chat_id.nil?
@@ -119,7 +123,7 @@ module TD
       end
 
       def group_media_groups(messages)
-        return [] unless messages.is_a?(Array)
+        return [] if !messages.is_a?(Array)
 
         album_map = {}
         seen = {}
@@ -129,7 +133,7 @@ module TD
           album_id = (m['media_album_id'] || m.dig('media', 'album_id')).to_s
           if album_id && !album_id.empty? && album_id != '0'
             album_map[album_id] ||= []
-            unless seen[album_id]
+            if seen[album_id].blank?
               result << album_map[album_id]
               seen[album_id] = true
             end
@@ -146,13 +150,10 @@ module TD
         HashHelper.get_unknown_structure_data(message, 'interaction_info')
       end
 
-      # Щоб отримати коментарі до поста, ми використовуємо його ID як message_thread_id.
-      # TDLib сам знає, куди йти (в linked chat) за коментарями.
-
       def fetch_post_comments(chat_id, message_id, limit = 100)
-        return [] unless logged_in?
+        return [] if logged_out?
 
-        puts "📡 Завантажуємо коментарі для поста #{message_id}..."
+        puts "📡 Loading post comments #{message_id}..."
 
         # lib has error on this method
         res = @client.get_message_thread_history(
@@ -165,10 +166,9 @@ module TD
 
         messages = HashHelper.get_unknown_structure_data(res, 'messages') || []
 
-        # Фільтруємо, щоб прибрати сам пост, якщо він раптом потрапив у видачу (хоча зазвичай ні)
         comments = messages.reject { |m| HashHelper.get_unknown_structure_data(m, 'id') == message_id }
 
-        puts "✅ Знайдено коментарів: #{comments.count}"
+        puts "✅ Found comments: #{comments.count}"
         comments
       rescue TD::Error => e
         puts "❌ TDLib Error: #{e.message}"
@@ -188,7 +188,7 @@ module TD
       private
 
       def resolve_chat_id(target)
-        return unless logged_in?
+        return if logged_out?
         return target.to_i if target.is_a?(Integer) || target.to_s =~ /\A-?\d+\z/
 
         username = target.to_s.strip.sub(/\A@/, '')
@@ -196,17 +196,17 @@ module TD
 
         HashHelper.get_unknown_structure_data(res, 'id')
       rescue TD::Error => e
-        return nil if e.message&.include?('USERNAME_INVALID')
+        return if e.message&.include?('USERNAME_INVALID')
       end
 
       def get_chat(chat_id)
-        return {} unless logged_in?
+        return {} if logged_out?
 
         @client.get_chat(chat_id:).value!(15)
       end
 
       def get_chat_full_info(chat_id)
-        return 0 unless logged_in?
+        return 0 if logged_out?
 
         chat = @client.get_chat(chat_id: chat_id).value!
 
@@ -215,7 +215,7 @@ module TD
           supergroup_id = HashHelper.get_unknown_structure_data(chat, 'type').supergroup_id
           full_info = @client.get_supergroup_full_info(supergroup_id: supergroup_id).value!
 
-          puts "📊 Аудиторія каналу: #{full_info.member_count}"
+          puts "📊 Chat members: #{full_info.member_count}"
           full_info
         when TD::Types::ChatType::BasicGroup
           basic_group_id = chat.type.basic_group_id
@@ -227,7 +227,7 @@ module TD
       end
 
       def get_message(chat_id, message_id)
-        return {} unless logged_in?
+        return {} if logged_out?
 
         @client.get_message(chat_id:, message_id:).value!(15)
       end
@@ -235,7 +235,7 @@ module TD
       def subscribe_by_message_link(link)
         if (m = link.match(%r{t\.me/c/(\d+)/\d+}))
           short_id = m[1].to_i
-          chat_id = -100_000_000_000 + short_id
+          chat_id = CHAT_ID_OFFSET - short_id
 
           @client.join_chat(chat_id:).value!(20)
         end
@@ -275,19 +275,23 @@ module TD
                rescue TD::Error
                  nil
                end
-
-        return nil unless chat
+        return if chat.blank?
 
         @client.join_chat(chat_id: HashHelper.get_unknown_structure_data(chat, 'id')).value!
 
         chat
       end
 
+      def logged_out?
+        !logged_in?
+      end
+
       def logged_in?
-        unless @auth_ready
-          puts '   ⚠️  [API] Помилка: Клієнт не авторизований. API-запит скасовано.'
-          return false
+        if @auth_ready
+          return true
         end
+        puts '⚠️ [API] Error. Client not logged in yet.'
+
         true
       end
     end

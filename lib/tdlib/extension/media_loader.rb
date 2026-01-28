@@ -3,40 +3,51 @@ module TD
     module MediaLoader
       # Works only after we fetch this message
       def download_file(file_id, dest_dir: @media_directory, timeout: 60)
-        file = @client.download_file(file_id: file_id, priority: 1, offset: 0, limit: 0,
-                                     synchronous: true).value!(timeout)
-        if file.is_a?(TD::Types::File) && file.local&.is_downloading_completed
-          src = file.local.path
-          if src && File.exist?(src)
-            if File.extname(dest_dir) && !File.extname(dest_dir).empty?
-              dst = dest_dir
-              FileUtils.mkdir_p(File.dirname(dst))
-            else
-              FileUtils.mkdir_p(dest_dir)
-              dst = File.join(dest_dir, File.basename(src))
-            end
+        file = load_downloaded_file(file_id, timeout:)
 
-            begin
-              FileUtils.mv(src, dst)
-            rescue StandardError
-              FileUtils.cp(src, dst)
-            end
+        process_local_file(file.local.path, dest_dir) if file_downloaded?(file)
+      rescue StandardError => e
+        puts "❌ download_file error: #{e.message}"
 
-            begin
-              File.chmod(0666, dst)
-            rescue StandardError => e
-              puts "⚠️ Не вдалося змінити права файлу: #{e.message}"
-            end
+        nil
+      end
 
-            return dst
-          end
+      def file_downloaded?(file)
+        file.is_a?(TD::Types::File) && file.local&.is_downloading_completed
+      end
+
+      def load_downloaded_file(file_id, timeout: 60)
+        @client.download_file(file_id: file_id, priority: 1, offset: 0, limit: 0,
+                              synchronous: true).value!(timeout)
+      rescue StandardError => e
+        puts "⚠️ load_downloaded_file error: #{e.message}"
+        nil
+      end
+
+      def process_local_file(src, dest_dir)
+        return nil if src.blank? || !File.exist?(src)
+
+        if File.extname(dest_dir) && !File.extname(dest_dir).empty?
+          dst = dest_dir
+          FileUtils.mkdir_p(File.dirname(dst))
+        else
+          FileUtils.mkdir_p(dest_dir)
+          dst = File.join(dest_dir, File.basename(src))
         end
 
-        nil
-      rescue StandardError => e
-        puts "   ❌ download_file error: #{e.message}"
+        begin
+          FileUtils.mv(src, dst)
+        rescue StandardError
+          FileUtils.cp(src, dst)
+        end
 
-        nil
+        begin
+          File.chmod(0o666, dst)
+        rescue StandardError => e
+          puts "⚠️ Could not change file rights: #{e.message}"
+        end
+
+        dst
       end
 
       # Uploads a local file to TDLib and returns the remote file id (integer) or nil on error.
