@@ -100,7 +100,7 @@ module TD
 
       def message_sending(messages)
         processed = messages.reverse.map { |msg| HashHelper.get_unknown_structure_data(msg, 'id') }
-        forward_messages_to_bot('@DNA_DEV_MINIONBot', -1_003_081_251_595, processed)
+        # Perform action with new messages
       end
     end
   end
