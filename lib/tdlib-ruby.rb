@@ -15,6 +15,12 @@ module TD
 
   setting :encryption_key
 
+  # Debounce window (seconds) for collecting parts of a media album before flushing it downstream.
+  setting :media_group_debounce, default: (ENV['TDLIB_ALBUM_DEBOUNCE'] || 3.0).to_f
+
+  # Hard cap (seconds) on how long a media album may be held in the buffer regardless of debounce resets.
+  setting :media_group_max_hold, default: (ENV['TDLIB_ALBUM_MAX_HOLD'] || 10.0).to_f
+
   setting :client do
     setting :api_id, constructor: ->(id) { id&.to_i }
     setting :api_hash

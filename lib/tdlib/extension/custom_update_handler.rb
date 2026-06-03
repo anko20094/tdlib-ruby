@@ -61,41 +61,60 @@ module TD
           group_id = HashHelper.get_unknown_structure_data(msg, 'media_album_id').to_i
 
           if group_id > 0
-            enqueue_media_group(group_id, msg)
+            enqueue_media_group(chat_id, group_id, msg)
           else
             message_sending([msg])
           end
         end
       end
 
-      def enqueue_media_group(group_id, msg)
+      # Buffer is keyed by [chat_id, media_album_id]: media_album_id alone is not globally unique,
+      # so albums from different sources handled by the same client must not collide.
+      def enqueue_media_group(chat_id, group_id, msg)
+        key = [chat_id, group_id]
+
         @media_mutex.synchronize do
-          @media_buffer[group_id] ||= { messages: [], timer: nil }
+          @media_buffer[key] ||= { messages: [], timer: nil, deadline: monotonic_time + media_group_max_hold }
 
           new_msg_id = HashHelper.get_unknown_structure_data(msg, 'id')
-          existing_ids = @media_buffer[group_id][:messages].map do |message|
+          existing_ids = @media_buffer[key][:messages].map do |message|
             HashHelper.get_unknown_structure_data(message, 'id')
           end
 
-          @media_buffer[group_id][:messages] << msg if existing_ids.exclude?(new_msg_id)
+          @media_buffer[key][:messages] << msg if existing_ids.exclude?(new_msg_id)
 
-          @media_buffer[group_id][:timer]&.kill
-          @media_buffer[group_id][:timer] = Thread.new do
-            sleep 1
-            flush_media_group(group_id)
+          # Debounce: every new part resets the timer, but never beyond the hard deadline —
+          # an endless stream of parts cannot hold the batch in the buffer forever.
+          delay = [media_group_debounce, @media_buffer[key][:deadline] - monotonic_time].min
+          @media_buffer[key][:timer]&.kill
+          @media_buffer[key][:timer] = Thread.new do
+            sleep delay if delay.positive?
+            flush_media_group(key)
           end
         end
       end
 
-      def flush_media_group(group_id)
+      def flush_media_group(key)
         data = nil
         @media_mutex.synchronize do
-          data = @media_buffer.delete(group_id)
+          data = @media_buffer.delete(key)
         end
 
         if data && data[:messages].any?
           message_sending(data[:messages])
         end
+      end
+
+      def media_group_debounce
+        TD.config.media_group_debounce
+      end
+
+      def media_group_max_hold
+        TD.config.media_group_max_hold
+      end
+
+      def monotonic_time
+        Process.clock_gettime(Process::CLOCK_MONOTONIC)
       end
 
       def message_sending(messages)
