@@ -81,7 +81,7 @@ module TD
             HashHelper.get_unknown_structure_data(message, 'id')
           end
 
-          @media_buffer[key][:messages] << msg if existing_ids.exclude?(new_msg_id)
+          @media_buffer[key][:messages] << msg unless existing_ids.include?(new_msg_id)
 
           # Debounce: every new part resets the timer, but never beyond the hard deadline —
           # an endless stream of parts cannot hold the batch in the buffer forever.
