@@ -25,7 +25,7 @@ module TD
       end
 
       def process_local_file(src, dest_dir)
-        return nil if src.to_s.empty? || !File.exist?(src)
+        return if src.to_s.empty? || !File.exist?(src)
 
         if File.extname(dest_dir) && !File.extname(dest_dir).empty?
           dst = dest_dir

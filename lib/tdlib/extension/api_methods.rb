@@ -108,7 +108,7 @@ module TD
       end
 
       def group_media_groups(messages)
-        return [] if !messages.is_a?(Array)
+        return [] unless messages.is_a?(Array)
 
         album_map = {}
         seen = {}
@@ -116,15 +116,15 @@ module TD
 
         messages.each do |m|
           album_id = HashHelper.get_unknown_structure_data(m, 'media_album_id').to_s
-          if !album_id.empty? && album_id != '0'
+          if album_id.empty? || album_id == '0'
+            result << m
+          else
             album_map[album_id] ||= []
-            unless seen[album_id]
+            if seen[album_id].nil?
               result << album_map[album_id]
               seen[album_id] = true
             end
             album_map[album_id] << m
-          else
-            result << m
           end
         end
 

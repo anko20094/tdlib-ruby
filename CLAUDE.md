@@ -12,7 +12,7 @@ gem 'tdlib-ruby', github: 'anko20094/tdlib-ruby', branch: 'master', tag: 'vX.Y.Z
 
 Work is tracked in YouTrack under `DNA-*` issue IDs. Ruby version: 3.3.6 (`.ruby-version`).
 
-TDLib type classes live in a separate gem, `tdlib-schema` — if a TD type or method is missing/mismatched, the fix is usually the schema gem version, not this repo.
+TDLib type classes live in a separate gem, `tdlib-schema` — since v3.3.0 that is the self-maintained fork `anko20094/tdlib-schema` (regenerated for TDLib 1.8.64 via `bin/parse`, consumed from GitHub, not rubygems). If a TD type or method is missing/mismatched, the fix is usually regenerating/pinning the schema gem, not this repo.
 
 ## Commands
 
@@ -58,9 +58,11 @@ Behavioral docs for the extension layer live in README.md under "EXTENSION DOCUM
 
 ## Project conventions (dna_bot "unwritten rules")
 
-- **Commits**: `[DNA-XXXX] Imperative summary` (YouTrack ticket), with body bullets explaining what/why when non-trivial. Infra-only commits may omit the prefix.
+- **Commits**: `[DNA-XXXX] Imperative summary` (YouTrack ticket), with body bullets explaining what/why when non-trivial. Infra-only commits may omit the prefix. **Never add AI co-author trailers** (`Co-Authored-By: Claude …`) or any other AI attribution — commits carry only the repo owner's authorship.
 - **Release flow**: every shipped change bumps the patch version in `lib/tdlib/version.rb` in the same commit; after it lands on `master`, the commit is tagged `vX.Y.Z`, and dna_bot's Gemfile pin (`tag: 'vX.Y.Z'`) is updated and re-locked. A change is not delivered until tagged and re-pinned in dna_bot.
-- **No ActiveSupport** — the gem must work in bare consumers; plain Ruby/stdlib only (e.g. `include?`, not `exclude?`). Runtime deps stay exactly: dry-configurable, concurrent-ruby, ffi, tdlib-schema. The gemspec pins (`ffi ~> 1.15.0`, `dry-configurable ~> 0.13`) are coordinated with dna_bot's dependency resolution — don't change them unilaterally.
+- **Code style: prefer `if` with a positive predicate** — `if x.nil?` / `if x.empty?` (add an `else` branch instead of negating). Never write `if !x` as a sole condition; when no clean positive predicate exists, `unless x` is the fallback (but never `unless` with `&&`/`||` — `Style/UnlessLogicalOperators` enforces that).
+- **Combine related guard clauses into one line** — `return if src.to_s.empty? || !File.exist?(src)`, not two stacked `return … if` / `return … unless` lines. `!` inside a compound condition is fine; prefer bare `return` over `return nil` in guards.
+- **No Rails in this gem: ActiveSupport/ActiveRecord methods DO NOT EXIST here.** `.blank?`, `.present?`, `.presence`, `.exclude?`, `.pluck`, `Time.current` raise `NoMethodError` in bare consumers and in the gem's own specs — dna_bot masks this only because it loads Rails. Use plain Ruby: `nil?`, `empty?`, `include?`, `map`. Runtime deps stay exactly: dry-configurable, concurrent-ruby, ffi, tdlib-schema. The gemspec pins (`ffi ~> 1.15.0`, `dry-configurable ~> 0.13`, `tdlib-schema >= 1.8.64.0`) are coordinated with dna_bot's dependency resolution — don't change them unilaterally.
 - **Public API stability**: dna_bot subclasses `TD::TelegramClient` and relies on `message_sending(messages)`, the `handlers` contract, and `TD::Extension::*` method signatures. Renaming or re-signaturing these breaks the consumer even when this repo's specs stay green.
 - **Unit specs must not need libtdjson**: never instantiate a real `TD::Client` in unit specs — stub it (`instance_double(TD::Client)`, stub `setup_directories`/`setup_handlers`) or mirror the production wiring with dummy classes that `prepend` the module under test. Time-dependent specs shrink the config windows in `before` / restore them in `after`, and poll with a monotonic-clock `wait_until` helper rather than asserting after a fixed sleep.
 - **Tolerate both struct and Hash messages** in anything processing updates — go through `HashHelper.get_unknown_structure_data` instead of calling typed accessors directly.
