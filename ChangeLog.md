@@ -1,3 +1,22 @@
+### 3.3.2 / 2026-06-05
+
+* Remove dead extension methods with no callers: chat_ids, fetch_interaction_info,
+  fetch_post_comments, get_chat_full_info, get_message, preliminary_upload_file,
+  wait_for_upload
+* Fix logged_in? always returning true — the auth guards in ApiMethods work again
+* resolve_chat_id swallows only USERNAME_INVALID/USERNAME_NOT_OCCUPIED; other TD errors
+  (flood wait, network) propagate to callers
+* Drop rescue ArgumentError/TypeError blocks that never caught real TD failures and
+  printed a misleading "Error forwarding messages"
+* Replace remaining ActiveSupport-only blank?/present? with plain Ruby (the gem has no
+  activesupport dependency)
+* message_editing reads the singular message_id of Update::MessageEdited (message_ids
+  raised NoMethodError); message_sending is an explicit abstract hook now
+* setup_directories creates the per-instance database/files directories actually passed
+  to TD::Client instead of the unused TD.config globals
+* README: document the real constructor params (files_directory, not media_directory),
+  the data-shape contract and the message_sending hook; drop docs of removed methods
+
 ### 3.3.1 / 2026-06-05
 
 * Normalize extension API returns to string-keyed hashes: channel_messages,

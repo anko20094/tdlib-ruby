@@ -29,7 +29,7 @@ module TD
           end
 
           invite_code = link.match(%r{(?:t\.me/joinchat/|t\.me/\+|tg://join\?invite=)([A-Za-z0-9_-]+)})
-          if chat_id.nil? && invite_code.present?
+          if chat_id.nil? && invite_code
             invite_link = link.include?('http') ? link : "https://t.me/joinchat/#{invite_code[1]}"
             info = @client.check_chat_invite_link(invite_link: invite_link).value!(15)
             chat_id = HashHelper.get_unknown_structure_data(info, 'chat_id') ||
@@ -37,17 +37,6 @@ module TD
           end
 
           chat_id ? HashHelper.deep_to_hash(get_chat(chat_id)) : nil
-      end
-
-      def chat_ids(limit = 1000)
-        return [] if logged_out?
-
-        res =  @client.get_chats(chat_list: { '@type' => 'chatListMain' }, limit:).value!(15)
-        HashHelper.get_unknown_structure_data(res, 'chat_ids')
-      rescue ArgumentError, TypeError => e
-        puts "❌ Error forwarding messages: #{e.class} - #{e.message}"
-
-        nil
       end
 
       def channel_messages(chat_id, from_message_id = 0, limit = 99, offset = 0)
@@ -68,7 +57,7 @@ module TD
         return if logged_out?
 
         chat_id = resolve_chat_id(bot)
-        return if chat_id.blank?
+        return if chat_id.nil?
 
         input = {
           '@type' => 'inputMessageText',
@@ -90,10 +79,6 @@ module TD
           reply_markup: nil,
           input_message_content: input
         ).value!(15)
-      rescue ArgumentError, TypeError => e
-        puts "❌ Error forwarding messages: #{e.class} - #{e.message}"
-
-        nil
       end
 
       def forward_messages_to_bot(bot, from_chat_id, message_ids)
@@ -120,10 +105,6 @@ module TD
         ).value!(20)
 
         result && HashHelper.deep_to_hash(result)
-      rescue ArgumentError, TypeError => e
-        puts "❌ Error forwarding messages: #{e.class} - #{e.message}"
-
-        nil
       end
 
       def group_media_groups(messages)
@@ -150,35 +131,6 @@ module TD
         sort_by_id(result)
       end
 
-      def fetch_interaction_info(message)
-        HashHelper.get_unknown_structure_data(message, 'interaction_info')
-      end
-
-      def fetch_post_comments(chat_id, message_id, limit = 100)
-        return [] if logged_out?
-
-        puts "📡 Loading post comments #{message_id}..."
-
-        # lib has error on this method
-        res = @client.get_message_thread_history(
-          chat_id:,
-          message_id: message_id,
-          from_message_id: 0,
-          offset: 0,
-          limit:
-        ).value!(15)
-
-        messages = HashHelper.get_unknown_structure_data(res, 'messages') || []
-
-        comments = messages.reject { |m| HashHelper.get_unknown_structure_data(m, 'id') == message_id }
-
-        puts "✅ Found comments: #{comments.count}"
-        comments
-      rescue TD::Error => e
-        puts "❌ TDLib Error: #{e.message}"
-        []
-      end
-
       def sort_by_id(messages)
         messages.map do |entry|
           if entry.is_a?(Array)
@@ -200,40 +152,17 @@ module TD
 
         HashHelper.get_unknown_structure_data(res, 'id')
       rescue TD::Error => e
-        return if e.message&.include?('USERNAME_INVALID')
+        # Only "no such username" degrades to nil; transient errors (flood wait,
+        # network) must propagate so callers can classify and retry them.
+        return if e.message.to_s.match?(/USERNAME_INVALID|USERNAME_NOT_OCCUPIED/)
+
+        raise
       end
 
       def get_chat(chat_id)
         return {} if logged_out?
 
         @client.get_chat(chat_id:).value!(15)
-      end
-
-      def get_chat_full_info(chat_id)
-        return 0 if logged_out?
-
-        chat = @client.get_chat(chat_id: chat_id).value!
-
-        case HashHelper.get_unknown_structure_data(chat, 'type')
-        when TD::Types::ChatType::Supergroup
-          supergroup_id = HashHelper.get_unknown_structure_data(chat, 'type').supergroup_id
-          full_info = @client.get_supergroup_full_info(supergroup_id: supergroup_id).value!
-
-          puts "📊 Chat members: #{full_info.member_count}"
-          full_info
-        when TD::Types::ChatType::BasicGroup
-          basic_group_id = chat.type.basic_group_id
-          @client.get_basic_group_full_info(basic_group_id: basic_group_id).value!
-
-        else
-          2
-        end
-      end
-
-      def get_message(chat_id, message_id)
-        return {} if logged_out?
-
-        @client.get_message(chat_id:, message_id:).value!(15)
       end
 
       def subscribe_by_message_link(link)
@@ -247,11 +176,11 @@ module TD
 
       def subscribe_by_username_link(link)
         m = link.match(%r{(?:tg://resolve\?domain=|https?://(?:www\.)?(?:t\.me|telegram\.me)/)@?([A-Za-z0-9_]{5,32})})
-        if m.present?
+        if m
           username = m[1]
           chat = @client.search_public_chat(username:).value!(15)
           id = HashHelper.get_unknown_structure_data(chat, 'id')
-          return if chat.blank? || id.blank?
+          return if chat.nil? || id.nil?
 
           @client.join_chat(chat_id: id).value!(20)
         end
@@ -262,9 +191,7 @@ module TD
         if (m = link.match(%r{(?:t\.me/joinchat/|t\.me/\+|tg://join\?invite=)([A-Za-z0-9_-]+)}))
           invite_code = m[1]
           invite_link = link.include?('http') ? link : "https://t.me/joinchat/#{invite_code}"
-          info = @client.check_chat_invite_link(invite_link:).value!(15)
-
-          return if !info.is_a?(Hash) && info.blank?
+          @client.check_chat_invite_link(invite_link:).value!(15)
 
           @client.join_chat_by_invite_link(invite_link:).value!(20)
         end
@@ -279,7 +206,7 @@ module TD
                rescue TD::Error
                  nil
                end
-        return if chat.blank?
+        return if chat.nil?
 
         @client.join_chat(chat_id: HashHelper.get_unknown_structure_data(chat, 'id')).value!
 
@@ -291,12 +218,11 @@ module TD
       end
 
       def logged_in?
-        if @auth_ready
-          return true
-        end
-        puts '⚠️ [API] Error. Client not logged in yet.'
+        return true if @auth_ready
 
-        true
+        puts '⚠️ [API] Client not logged in yet.'
+
+        false
       end
     end
   end

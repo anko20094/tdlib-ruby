@@ -137,4 +137,24 @@ describe TD::Extension::CustomUpdateHandler do
       end
     end
   end
+
+  describe '#message_sending' do
+    it 'is an abstract hook that must be overridden' do
+      expect { DummyTelegramClient.new({}).message_sending([]) }
+        .to raise_error(NotImplementedError, /message_sending/)
+    end
+  end
+
+  describe '#message_editing' do
+    it 'reads the singular message_id of Update::MessageEdited' do
+      update = TD::Types::Update::MessageEdited.new(chat_id: 10, message_id: 5, edit_date: 0, reply_markup: nil)
+
+      expect { handler.message_editing(update) }
+        .to output(/Message edited in chat 10: 5/).to_stdout
+    end
+
+    it 'ignores foreign update types' do
+      expect { handler.message_editing(:not_an_update) }.not_to output.to_stdout
+    end
+  end
 end

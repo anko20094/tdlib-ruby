@@ -182,194 +182,107 @@ Typeization made by [Yuri Mikhaylov](https://github.com/yurijmi)
 
 # EXTENSION DOCUMENTATION
 
+Fork-specific layer on top of `TD::Client`: a subclassable `TD::TelegramClient` plus
+extension modules (`ApiMethods`, `MediaLoader`, `Connection`, `CustomUpdateHandler`).
+
+## Data-shape contract
+
+Every public `ApiMethods` call that returns TDLib data normalizes it with
+`TD::Extension::HashHelper.deep_to_hash`: string-keyed hashes with the TDLib `'@type'`
+restored on every nesting level. Consumers see the same shape whether the response was
+wrapped into `TD::Types` or force-fed as a raw hash by the update-manager fallback.
+
 # `api_methods.rb`
 
 ## subscribe_to_link(raw_link)
-- Signature: `subscribe_to_link(raw_link)`
-- Params:
-    - `raw_link` — String-like link to subscribe to.
-- Returns:
-    - Result of the successful underlying join call or `nil` on failure.
-- API calls (delegates to helpers):
-    - `subscribe_by_message_link` → `@client.join_chat`
-    - `subscribe_by_username_link` → `@client.search_public_chat`, `@client.join_chat`
-    - `subscribe_by_invite_link` → `@client.check_chat_invite_link`, `@client.join_chat_by_invite_link`
-- Notes:
-    - Requires authorization (`logged_in?`). Rescues `StandardError` and returns `nil` on error.
-
-## chat_ids(limit = 1000)
-- Signature: `chat_ids(limit = 1000)`
-- Params:
-    - `limit` — Integer maximum number of chats to request (default: 1000).
-- Returns:
-    - Array of chat ids or `nil` on error. Returns empty array when not logged in.
-- API calls:
-    - `@client.get_chats(chat_list: { '@type' => 'chatListMain' }, limit:)`
-- Notes:
-    - Rescues `ArgumentError` and `TypeError` and returns `nil` (logs error).
+- Joins a chat by message link (`t.me/c/...`), username link, invite link, or bare channel name.
+- Returns: normalized hash of the join result/chat, or `nil` when the link cannot be resolved.
+- Errors: `TD::Error` propagates, except `USER_ALREADY_PARTICIPANT`, which self-heals by
+  resolving the already-joined chat.
 
 ## channel_messages(chat_id, from_message_id = 0, limit = 99, offset = 0)
-- Signature: `channel_messages(chat_id, from_message_id = 0, limit = 99, offset = 0)`
-- Params:
-    - `chat_id` — Integer chat identifier.
-    - `from_message_id` — Integer start message id (default: 0).
-    - `limit` — Integer number of messages to fetch (default: 99).
-    - `offset` — Integer offset in history (default: 0).
-- Returns:
-    - Array of message hashes (or empty array on error). Returns empty array when not logged in.
-- API calls:
-    - `@client.get_chat_history(chat_id:, from_message_id:, limit:, offset:, only_local: false)`
-- Notes:
-    - Logs and returns `[]` on errors.
+- Returns: Array of normalized message hashes (newest first); `[]` when not logged in.
+- Errors: `TD::Error`/timeouts propagate — callers classify them (frozen account,
+  chat not found, transient).
 
 ## read_messages(chat_id, message_ids)
-- Signature: `read_messages(chat_id, message_ids)`
-- Params:
-    - `chat_id` — Integer chat identifier.
-    - `message_ids` — Array of Integer message ids (or single id depending on usage).
-- Returns:
-    - Result of `view_messages` API call (or raises if underlying call errors).
-- API calls:
-    - `@client.open_chat(chat_id:)`
-    - `@client.view_messages(chat_id:, message_ids:, force_read: true, source: nil)`
-- Notes:
-    - No explicit rescue in method.
+- Opens the chat and marks the messages as read (`force_read: true`). Errors propagate.
 
 ## start_chat_with_bot(bot)
-- Signature: `start_chat_with_bot(bot)`
-- Params:
-    - `bot` — Integer chat id or bot username.
-- Returns:
-    - Result of `@client.send_message` or `nil` on error. Returns nothing when not logged in or chat not found.
-- API calls:
-    - `resolve_chat_id` (which may call `@client.search_public_chat`)
-    - `@client.send_message(...)` with `inputMessageText` containing `/start`
-- Notes:
-    - Catches `ArgumentError` and `TypeError`, logs and returns `nil`.
+- Sends `/start` to a bot (chat id or username). Returns the send result, or `nil` when
+  the bot username cannot be resolved. `TD::Error` propagates.
 
 ## forward_messages_to_bot(bot, from_chat_id, message_ids)
-- Signature: `forward_messages_to_bot(bot, from_chat_id, message_ids)`
-- Params:
-    - `bot` — Integer chat id or bot username.
-    - `from_chat_id` — Integer source chat id.
-    - `message_ids` — Array of Integer message ids to forward.
-- Returns:
-    - Result of `@client.forward_messages` or `nil` on error. Returns nothing if not logged in or bot chat not found.
-- API calls:
-    - `resolve_chat_id` (may call `@client.search_public_chat`)
-    - `@client.forward_messages(...)`
-- Notes:
-    - Catches `ArgumentError` and `TypeError`, logs and returns `nil`.
+- Returns: normalized hash (read `result['messages']`), or `nil` when the bot cannot be
+  resolved. `TD::Error` propagates.
 
 ## group_media_groups(messages)
-- Signature: `group_media_groups(messages)`
-- Params:
-    - `messages` — Array of message hashes.
-- Returns:
-    - Array where each media album is grouped as an Array of messages; single messages kept as-is. Returns `[]` if input is not an Array.
-- API calls:
-    - None (pure local processing).
-- Notes:
-    - Groups by `media_album_id` or `media.album_id` and sorts grouped albums by message id.
-
-## fetch_interaction_info(message)
-- Signature: `fetch_interaction_info(message)`
-- Params:
-    - `message` — Hash representing a message.
-- Returns:
-    - The `interaction_info` structure or `nil`.
-- API calls:
-    - None (uses `HashHelper` extraction).
-
-## fetch_post_comments(chat_id, message_id, limit = 100)
-- Signature: `fetch_post_comments(chat_id, message_id, limit = 100)`
-- Params:
-    - `chat_id` — Integer chat id containing the post.
-    - `message_id` — Integer id of the post (used as `message_thread_id`).
-    - `limit` — Integer maximum comments to fetch (default: 100).
-- Returns:
-    - Array of comment messages (empty array on error). Returns `[]` when not logged in.
-- API calls:
-    - `@client.get_message_thread_history(chat_id:, message_id:, from_message_id: 0, offset: 0, limit:)`
-- Notes:
-    - Filters out the original post from results (if present).
-    - Catches `TD::Error` and generic `StandardError`, logs and returns `[]`.
+- Pure local processing; accepts hashes and typed structs. Albums are grouped by
+  `media_album_id` into nested arrays sorted by message id; singles stay as-is.
+  Returns `[]` for non-Array input.
 
 ---
 
 # TD::Extension::CustomUpdateHandler
-The module implements an update routing mechanism (Updates) from TDLib.
 
+Update routing + media-album buffering, `prepend`ed to `TD::TelegramClient`.
 
-- def handlers super.merge({new_updates}) end,
-  - to preserve base logic (new_message etc.)
+- `subscribe_channel_posts(client)` routes every `TD::Types::Update` through the
+  `handlers` map. Extend in a subclass with `def handlers; super.merge(...); end`.
+- Default handlers: `new_message` (`Update::ChatReadInbox`), `message_deletion`
+  (`Update::DeleteMessages`), `message_editing` (`Update::MessageEdited`).
+- `new_message` fetches unread messages via `channel_messages`, marks the newest as
+  read, and buffers album parts per `[chat_id, media_album_id]` with a debounce window
+  (`TD.config.media_group_debounce`, default 3s, env `TDLIB_ALBUM_DEBOUNCE`) capped by a
+  hard hold deadline (`TD.config.media_group_max_hold`, default 10s, env
+  `TDLIB_ALBUM_MAX_HOLD`); then calls `message_sending`.
+- `message_sending(messages)` is an **abstract hook — override it in your subclass**.
+  It receives a flat Array of normalized message hashes; album parts arrive together
+  after the debounce window (nesting them into groups is the consumer's job, e.g. via
+  `group_media_groups`). The gem raises `NotImplementedError` if it is not overridden.
 
-
-- Basic handler methods:
-    - `new_message` — handles TD::Types::Update::ChatReadInbox (performs basic actions and calls `message_sending`)
-    - `message_deletion` — handles TD::Types::Update::DeleteMessages
-    - `message_editing` — handles TD::Types::Update::MessageEdited
 ---
+
 # TD::Extension::MediaLoader
-
-The module is designed for managing media files: downloading incoming files from Telegram to the local disk and preliminary uploading of local files to Telegram servers.
-
-## ⚡️ File Handling Methods
-
-The module provides synchronous methods for file transfer and status monitoring:
 
 | Method | Parameters | Description |
 | :--- | :--- | :--- |
-| `download_file` | `file_id`, `dest_dir` | Downloads a file by ID, waits for completion, and moves it from the TDLib cache to the target folder `dest_dir`. Returns the local path to the file. |
-| `preliminary_upload_file` | `path`, `type` | Initiates the upload of a local file to the Telegram server (in preparation for sending). Returns the internal file ID. |
-| `wait_for_upload` | `file_id`, `timeout` | Blocks execution in a loop, waiting for confirmation of successful file upload to the server (`is_uploading_completed`). |
-
-### 📌 Implementation Details
-
-* **`download_file`**: Works only if information about the file is already cached by TDLib (e.g., after receiving a message object).
-* **`preliminary_upload_file`**: The `type` argument determines the file type for Telegram. Supported types:
-    * `:photo`
-    * `:video`
-    * `:video_note` (video note/circle)
-    * `:voice_note` (voice note)
-    * Any other value: treated as `Document`.
-* **`wait_for_upload`**: Checks success via several criteria: the `is_uploading_completed` flag, presence of `remote.unique_id`, or comparison `uploaded_size >= expected_size`.
-
----
+| `download_file` | `file_id`, `dest_dir:`, `timeout:` | Downloads a file by id (works once TDLib has the file cached, e.g. after receiving its message), waits for completion and moves it from the TDLib cache into `dest_dir`. Returns the local path or `nil` on error. |
 
 ---
 
 # TD::TelegramClient
-# Requires entering a code from a message during the first authorization
 
-This is a base wrapper class over `TD::Client`. It unifies all extension modules, manages the connection lifecycle, authorization, and the main event processing loop.
+Base wrapper over `TD::Client` designed for **inheritance**: subclass it and override
+the hooks (`message_sending`, `handlers`, ...). Integrates `ApiMethods`, `MediaLoader`,
+`Connection` and (prepended) `CustomUpdateHandler`.
 
-**Architectural pattern:** This class is designed for **inheritance**. To create your own bot or client, you must create a new class that inherits from `TD::TelegramClient`.
-
-## 🧩 Connected Modules
-
-The class automatically integrates functionality from the following extensions:
-
-* `TD::Extension::ApiMethods` — API interaction methods (sending messages, search, etc.).
-* `TD::Extension::MediaLoader` — file downloading and uploading.
-* `TD::Extension::Connection` — connection and authorization logic.
-* `TD::Extension::CustomUpdateHandler` (**Prepend**) — interception and routing of incoming updates (Updates).
-
-## ⚙️ Initialization and Parameters
+## Initialization
 
 ```ruby
-client = MyClient.new(phone: '380...', media_directory: './media')
-
-
 TD.configure do |c|
-  c.lib_path = 'path to tdlib library'
-  c.client.api_id = 'api_id my.telegram.org'
-  c.client.api_hash =  'api_hash my.telegram.org'
-  c.client.database_directory = './tdlib_data/files'
-  c.client.files_directory = './tdlib_data/database'
-  c.client.use_test_dc = false
-  c.client.use_file_database = true
-  c.client.use_chat_info_database = true
-  c.client.use_message_database = true
+  c.lib_path = 'path to dir with libtdjson'
+  c.client.api_id = 'api_id from my.telegram.org'
+  c.client.api_hash = 'api_hash from my.telegram.org'
 end
+
+class MyClient < TD::TelegramClient
+  def message_sending(messages)
+    # your delivery logic; messages is an Array of string-keyed hashes
+  end
+end
+
+client = MyClient.new(phone: '380...',
+                      database_directory: './tdlib_data/database',
+                      files_directory: './tdlib_data/files', # also used as the media dir
+                      by_qr: false)                          # true => QR-code login
+client.run
 ```
+
+Constructor params: `phone:`, `database_directory:` (default `./tdlib_database`),
+`files_directory:` (default `./tdlib_files`; exposed as `#media_directory` and used by
+`MediaLoader`), `by_qr:`, and optional per-instance `api_id:`/`api_hash:` overriding the
+`TD.config.client` values. Both directories are created on initialization.
+
+Interactive auth (`Connection`) asks for the SMS/app code in the terminal (`r` resends
+the code) and for the 2FA password when required.

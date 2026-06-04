@@ -169,9 +169,11 @@ module TD
         false
       end
 
+      # Pre-create the per-instance dirs actually handed to TD::Client — not the
+      # TD.config globals, which per-instance params override anyway.
       def setup_directories
-        FileUtils.mkdir_p(TD.config.client.database_directory)
-        FileUtils.mkdir_p(TD.config.client.files_directory)
+        FileUtils.mkdir_p(@database_directory)
+        FileUtils.mkdir_p(@media_directory)
       end
 
       def close

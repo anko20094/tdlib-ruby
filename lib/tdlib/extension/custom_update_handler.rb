@@ -38,10 +38,9 @@ module TD
       end
 
       def message_editing(update)
-        chat_id = update.chat_id
-        message_ids = update.message_ids
+        return unless update.is_a?(TD::Types::Update::MessageEdited)
 
-        puts "Messages edited in chat #{chat_id}: #{message_ids.join(', ')}"
+        puts "Message edited in chat #{update.chat_id}: #{update.message_id}"
       end
 
       def new_message(update)
@@ -117,9 +116,11 @@ module TD
         Process.clock_gettime(Process::CLOCK_MONOTONIC)
       end
 
+      # Abstract hook: override in your TelegramClient subclass. Receives a flat Array of
+      # normalized (string-keyed, '@type'-carrying) message hashes; album parts arrive
+      # together after the debounce window, nesting them into groups is the consumer's job.
       def message_sending(messages)
-        processed = messages.reverse.map { |msg| HashHelper.get_unknown_structure_data(msg, 'id') }
-        puts "Processing messages: #{processed.join(', ')}"
+        raise NotImplementedError, "#{self.class} must implement #message_sending(messages)"
       end
     end
   end

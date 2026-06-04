@@ -14,12 +14,13 @@ module TD
       @auth_state = :initializing
       @phone = params[:phone] || ''
       @media_directory = params[:files_directory] || './tdlib_files'
+      @database_directory = params[:database_directory] || './tdlib_database'
       @auth_ready = false
       @by_qr = params[:by_qr] || false
 
       setup_directories
 
-      @client = TD::Client.new(database_directory: params[:database_directory] || './tdlib_database',
+      @client = TD::Client.new(database_directory: @database_directory,
                                files_directory: @media_directory,
                                **{ api_id: params[:api_id], api_hash: params[:api_hash] }.compact)
 

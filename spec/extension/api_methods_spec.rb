@@ -17,9 +17,9 @@ module ApiMethodsSpec
   class Harness
     include TD::Extension::ApiMethods
 
-    def initialize(client = nil)
+    def initialize(client = nil, auth_ready: true)
       @client = client
-      @auth_ready = true
+      @auth_ready = auth_ready
     end
   end
 end
@@ -101,6 +101,40 @@ describe TD::Extension::ApiMethods do
 
       expect(harness.forward_messages_to_bot(555, 10, [1]))
         .to eq('@type' => 'messages', 'total_count' => 0, 'messages' => [])
+    end
+  end
+
+  describe 'auth guards' do
+    let(:harness) { ApiMethodsSpec::Harness.new(client, auth_ready: false) }
+
+    it 'returns [] from channel_messages when not authorized' do
+      result = nil
+      expect { result = harness.channel_messages(10) }.to output(/not logged in/).to_stdout
+      expect(result).to eq([])
+    end
+
+    it 'returns nil from subscribe_to_link when not authorized' do
+      result = nil
+      expect { result = harness.subscribe_to_link('https://t.me/c/1/2') }.to output(/not logged in/).to_stdout
+      expect(result).to be_nil
+    end
+  end
+
+  describe '#resolve_chat_id (private)' do
+    def td_error(message)
+      TD::Error.new(TD::Types::Error.new(code: 400, message: message))
+    end
+
+    it 'degrades to nil only for unknown usernames' do
+      allow(client).to receive(:search_public_chat).and_raise(td_error('USERNAME_INVALID'))
+
+      expect(harness.__send__(:resolve_chat_id, '@ghost')).to be_nil
+    end
+
+    it 're-raises other TD errors so flood waits stay visible to callers' do
+      allow(client).to receive(:search_public_chat).and_raise(td_error('Too Many Requests: retry after 5'))
+
+      expect { harness.__send__(:resolve_chat_id, '@busy') }.to raise_error(TD::Error, /Too Many Requests/)
     end
   end
 end
