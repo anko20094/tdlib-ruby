@@ -82,17 +82,51 @@ module TD
       end
 
       def handle_phone_number
-        @client.set_authentication_phone_number(phone_number: @phone, settings: nil)
+        @client.set_authentication_phone_number(phone_number: @phone, settings: nil).value!
+      rescue StandardError => e
+        puts "❌ Failed to request code: #{e.message}"
       end
 
       def handle_code
-        print '📱 [ACTION] Enter pass code: '
+        print_code_info
+        print "📱 [ACTION] Enter pass code ('r' to resend): "
         code = $stdin.gets&.strip
         if code.nil? || code.empty?
           puts '❌ Code is blank.'
+          @auth_state = :wait_code
           return
         end
-        @client.check_authentication_code(code:)
+        return resend_code if code.casecmp('r').zero?
+
+        @client.check_authentication_code(code:).value!
+      rescue StandardError => e
+        puts "❌ Code check failed: #{e.message}"
+        @auth_state = :wait_code
+      end
+
+      def print_code_info
+        state = @client.get_authorization_state.value!(5)
+        return unless state.respond_to?(:code_info)
+
+        info = state.code_info
+        puts "ℹ️ Code sent via: #{code_type_name(info.type)}, " \
+             "next type: #{info.next_type ? code_type_name(info.next_type) : 'none'}, " \
+             "resend timeout: #{info.timeout}s"
+      rescue StandardError => e
+        puts "⚠️ Failed to fetch code info: #{e.message}"
+      end
+
+      def code_type_name(type)
+        type.class.name.split('::').last
+      end
+
+      def resend_code
+        @client.resend_authentication_code(reason: nil).value!
+        puts '🔁 Code resent.'
+      rescue StandardError => e
+        puts "❌ Resend failed: #{e.message}"
+      ensure
+        @auth_state = :wait_code
       end
 
       def handle_password
