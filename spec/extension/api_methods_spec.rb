@@ -104,6 +104,44 @@ describe TD::Extension::ApiMethods do
     end
   end
 
+  describe '#get_media_group' do
+    def slice_future(*messages)
+      double('Future', value!: { 'messages' => messages })
+    end
+
+    it 'returns the normalized anchor alone for a non-album message without a request' do
+      expect(harness.get_media_group(10, typed(1, 10, 0))).to eq([hash_msg(1, 10, 0)])
+    end
+
+    it 'collects the whole album from one enclosed history slice' do
+      allow(client).to receive(:get_chat_history).and_return(
+        slice_future(hash_msg(9, 10, 0), hash_msg(5, 10, 777), hash_msg(4, 10, 777),
+                     hash_msg(3, 10, 777), hash_msg(1, 10, 0))
+      )
+
+      expect(harness.get_media_group(10, hash_msg(4, 10, 777)))
+        .to eq([hash_msg(3, 10, 777), hash_msg(4, 10, 777), hash_msg(5, 10, 777)])
+      expect(client).to have_received(:get_chat_history).once
+    end
+
+    it 'refetches while the history slice keeps adding parts' do
+      allow(client).to receive(:get_chat_history).and_return(
+        slice_future(hash_msg(4, 10, 777)),
+        slice_future(hash_msg(9, 10, 0), hash_msg(5, 10, 777), hash_msg(4, 10, 777), hash_msg(1, 10, 0))
+      )
+
+      expect(harness.get_media_group(10, hash_msg(4, 10, 777)))
+        .to eq([hash_msg(4, 10, 777), hash_msg(5, 10, 777)])
+      expect(client).to have_received(:get_chat_history).twice
+    end
+
+    it 'raises TD::Error when the history fetch times out' do
+      allow(client).to receive(:get_chat_history).and_return(double('Future', value!: nil))
+
+      expect { harness.get_media_group(10, hash_msg(4, 10, 777)) }.to raise_error(TD::Error, /timed out/)
+    end
+  end
+
   describe 'auth guards' do
     let(:harness) { ApiMethodsSpec::Harness.new(client, auth_ready: false) }
 

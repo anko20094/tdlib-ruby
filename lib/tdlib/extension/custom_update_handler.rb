@@ -1,8 +1,11 @@
 module TD
   module Extension
     module CustomUpdateHandler
+      MAX_DELIVERED_ALBUMS = 256
+
       def initialize(params)
         @media_buffer = {}
+        @delivered_albums = {}
         @media_mutex = Mutex.new
 
         super
@@ -59,11 +62,48 @@ module TD
         messages.each do |msg|
           group_id = HashHelper.get_unknown_structure_data(msg, 'media_album_id').to_i
 
-          if group_id > 0
-            enqueue_media_group(chat_id, group_id, msg)
-          else
+          if group_id.zero?
             message_sending([msg])
+          else
+            deliver_media_group(chat_id, group_id, msg)
           end
+        end
+      end
+
+      # Primary album path (DNA-1124): a Telegram album is atomic on the server, so one
+      # anchored fetch returns every part at once instead of waiting out the debounce
+      # window. The debounce buffer below remains as the fallback when the fetch fails.
+      def deliver_media_group(chat_id, group_id, msg)
+        key = [chat_id, group_id]
+        msg_id = HashHelper.get_unknown_structure_data(msg, 'id')
+        return if album_part_delivered?(key, msg_id)
+
+        batch = get_media_group(chat_id, msg)
+        fresh = record_delivered_parts(key, batch)
+
+        # A part absent from an earlier fetched batch must still go out on its own —
+        # downstream self-healing (tail merge) depends on receiving it.
+        message_sending(fresh) if fresh.any?
+      rescue StandardError => e
+        warn("get_media_group failed for chat #{chat_id} album #{group_id} " \
+             "(#{e.class}: #{e.message}); falling back to debounce buffering")
+        enqueue_media_group(chat_id, group_id, msg)
+      end
+
+      def album_part_delivered?(key, msg_id)
+        @media_mutex.synchronize { @delivered_albums[key]&.include?(msg_id) || false }
+      end
+
+      def record_delivered_parts(key, batch)
+        @media_mutex.synchronize do
+          delivered = (@delivered_albums[key] ||= [])
+          fresh = batch.reject { |part| delivered.include?(HashHelper.get_unknown_structure_data(part, 'id')) }
+          delivered.concat(fresh.map { |part| HashHelper.get_unknown_structure_data(part, 'id') })
+
+          # plain FIFO cap — albums are short-lived, no need for true LRU recency
+          @delivered_albums.shift while @delivered_albums.size > MAX_DELIVERED_ALBUMS
+
+          fresh
         end
       end
 

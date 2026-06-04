@@ -3,6 +3,8 @@ module TD
   module Extension
     module ApiMethods
       CHAT_ID_OFFSET = -1_000_000_000_000.freeze
+      ALBUM_MAX_PARTS = 10 # Telegram hard limit for one media group
+      MEDIA_GROUP_FETCH_ATTEMPTS = 3
 
       def subscribe_to_link(raw_link)
         return if logged_out?
@@ -46,6 +48,31 @@ module TD
 
         messages = HashHelper.get_unknown_structure_data(res, 'messages') || []
         messages.map { |msg| HashHelper.deep_to_hash(msg) }
+      end
+
+      # Returns every part of the anchor's media album as normalized hashes sorted by id.
+      # A Telegram album is published atomically with adjacent message ids, so one history
+      # slice anchored at any known part covers the whole group (DNA-1124).
+      def get_media_group(chat_id, anchor_message)
+        anchor = HashHelper.deep_to_hash(anchor_message)
+        album_id = HashHelper.get_unknown_structure_data(anchor, 'media_album_id').to_s
+        return [anchor] if album_id.empty? || album_id == '0'
+
+        anchor_id = HashHelper.get_unknown_structure_data(anchor, 'id')
+        parts = { anchor_id => anchor }
+
+        # getChatHistory may return fewer messages than requested (documented TDLib
+        # behavior, especially on a cold local database) — refetch while parts keep
+        # arriving, stop early once the album is provably complete.
+        MEDIA_GROUP_FETCH_ATTEMPTS.times do |attempt|
+          slice = album_history_slice(chat_id, anchor_id)
+          added = merge_album_parts(parts, slice, album_id)
+
+          break if parts.size >= ALBUM_MAX_PARTS || album_enclosed?(parts, slice)
+          break if added.zero? && attempt.positive?
+        end
+
+        parts.values.sort_by { |part| part['id'].to_i }
       end
 
       def read_messages(chat_id, message_ids)
@@ -211,6 +238,36 @@ module TD
         @client.join_chat(chat_id: HashHelper.get_unknown_structure_data(chat, 'id')).value!
 
         chat
+      end
+
+      # offset -9 / limit 19 reaches up to 9 newer and 9 older neighbours of the anchor:
+      # an album holds at most ALBUM_MAX_PARTS messages with adjacent ids.
+      def album_history_slice(chat_id, anchor_id)
+        res = @client.get_chat_history(chat_id:, from_message_id: anchor_id, offset: -9,
+                                       limit: 19, only_local: false).value!(15)
+        if res.nil?
+          raise TD::Error, TD::Types::Error.new(code: 0, message: 'get_media_group: getChatHistory timed out')
+        end
+
+        messages = HashHelper.get_unknown_structure_data(res, 'messages') || []
+        messages.map { |msg| HashHelper.deep_to_hash(msg) }
+      end
+
+      def merge_album_parts(parts, slice, album_id)
+        fresh = slice.select do |msg|
+          HashHelper.get_unknown_structure_data(msg, 'media_album_id').to_s == album_id && parts[msg['id']].nil?
+        end
+        fresh.each { |msg| parts[msg['id']] = msg }
+        fresh.size
+      end
+
+      # The album is provably complete when the slice contains non-album messages on
+      # both sides of the collected parts.
+      def album_enclosed?(parts, slice)
+        ids = parts.keys.map(&:to_i)
+        outsiders = slice.reject { |msg| parts.key?(msg['id']) }
+
+        outsiders.any? { |msg| msg['id'].to_i < ids.min } && outsiders.any? { |msg| msg['id'].to_i > ids.max }
       end
 
       def logged_out?

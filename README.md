@@ -205,6 +205,13 @@ wrapped into `TD::Types` or force-fed as a raw hash by the update-manager fallba
 - Errors: `TD::Error`/timeouts propagate — callers classify them (frozen account,
   chat not found, transient).
 
+## get_media_group(chat_id, anchor_message)
+- Returns every part of the anchor's media album as normalized hashes sorted by id —
+  one anchored `getChatHistory` slice (albums are atomic server-side), with a short
+  refetch loop for cold local databases. For a non-album anchor returns `[anchor]`
+  without a request.
+- Errors: `TD::Error` propagates (including fetch timeout).
+
 ## read_messages(chat_id, message_ids)
 - Opens the chat and marks the messages as read (`force_read: true`). Errors propagate.
 
@@ -232,14 +239,18 @@ Update routing + media-album buffering, `prepend`ed to `TD::TelegramClient`.
 - Default handlers: `new_message` (`Update::ChatReadInbox`), `message_deletion`
   (`Update::DeleteMessages`), `message_editing` (`Update::MessageEdited`).
 - `new_message` fetches unread messages via `channel_messages`, marks the newest as
-  read, and buffers album parts per `[chat_id, media_album_id]` with a debounce window
-  (`TD.config.media_group_debounce`, default 3s, env `TDLIB_ALBUM_DEBOUNCE`) capped by a
-  hard hold deadline (`TD.config.media_group_max_hold`, default 10s, env
-  `TDLIB_ALBUM_MAX_HOLD`); then calls `message_sending`.
+  read, and delivers album parts instantly via `get_media_group` (a Telegram album is
+  atomic on the server, so one anchored fetch returns every part at once). When that
+  fetch fails, parts fall back to the per-`[chat_id, media_album_id]` debounce buffer
+  (`TD.config.media_group_debounce`, default 3s, env `TDLIB_ALBUM_DEBOUNCE`; hard cap
+  `TD.config.media_group_max_hold`, default 10s, env `TDLIB_ALBUM_MAX_HOLD`).
+- Delivered albums are tracked per `[chat_id, media_album_id]` with the delivered ids,
+  so each album is fetched once (not once per part) while a late tail that was absent
+  from the fetched batch still goes out on its own.
 - `message_sending(messages)` is an **abstract hook — override it in your subclass**.
   It receives a flat Array of normalized message hashes; album parts arrive together
-  after the debounce window (nesting them into groups is the consumer's job, e.g. via
-  `group_media_groups`). The gem raises `NotImplementedError` if it is not overridden.
+  (nesting them into groups is the consumer's job, e.g. via `group_media_groups`).
+  The gem raises `NotImplementedError` if it is not overridden.
 
 ---
 

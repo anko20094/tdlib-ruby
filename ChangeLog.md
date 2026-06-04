@@ -1,3 +1,12 @@
+### 3.4.0 / 2026-06-05
+
+* Instant media-group delivery (DNA-1124): new ApiMethods#get_media_group collects the
+  whole album with one anchored getChatHistory slice (albums are atomic server-side);
+  new_message delivers albums immediately instead of waiting out the 3-10s debounce,
+  the debounce buffer remains as the fallback when the fetch fails
+* Id-aware delivered-albums tracking: one fetch per album instead of one per part,
+  while a late album tail still goes through for downstream self-healing
+
 ### 3.3.3 / 2026-06-05
 
 * Scope the update-manager raw-hash fallback to TD::Types.wrap failures only;

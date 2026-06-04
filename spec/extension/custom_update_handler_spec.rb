@@ -138,6 +138,69 @@ describe TD::Extension::CustomUpdateHandler do
     end
   end
 
+  describe '#deliver_media_group' do
+    it 'delivers the whole fetched album immediately in one batch' do
+      allow(handler).to receive(:get_media_group).and_return([message(1, 10, 777), message(2, 10, 777)])
+
+      handler.deliver_media_group(10, 777, message(1, 10, 777))
+
+      expect(handler.sent_batches).to eq([[message(1, 10, 777), message(2, 10, 777)]])
+    end
+
+    it 'does not refetch or redeliver parts already covered by a fetched batch' do
+      allow(handler).to receive(:get_media_group).and_return([message(1, 10, 777), message(2, 10, 777)])
+
+      handler.deliver_media_group(10, 777, message(1, 10, 777))
+      handler.deliver_media_group(10, 777, message(2, 10, 777))
+
+      expect(handler.sent_batches.size).to eq(1)
+      expect(handler).to have_received(:get_media_group).once
+    end
+
+    it 'lets a late tail through on its own so downstream self-healing sees it' do
+      allow(handler).to receive(:get_media_group).and_return(
+        [message(1, 10, 777), message(2, 10, 777)],
+        [message(1, 10, 777), message(2, 10, 777), message(3, 10, 777)]
+      )
+
+      handler.deliver_media_group(10, 777, message(1, 10, 777))
+      handler.deliver_media_group(10, 777, message(3, 10, 777))
+
+      expect(handler.sent_batches).to eq([
+        [message(1, 10, 777), message(2, 10, 777)],
+        [message(3, 10, 777)]
+      ])
+    end
+
+    it 'falls back to debounce buffering when the fetch fails' do
+      TD.config.media_group_debounce = 0.05
+      allow(handler).to receive(:get_media_group)
+        .and_raise(TD::Error.new(TD::Types::Error.new(code: 0, message: 'boom')))
+
+      expect { handler.deliver_media_group(10, 777, message(1, 10, 777)) }
+        .to output(/falling back to debounce/).to_stderr
+      wait_for_batches(1)
+
+      expect(handler.sent_batches).to eq([[message(1, 10, 777)]])
+    ensure
+      TD.config.media_group_debounce = 3.0
+    end
+  end
+
+  describe '#new_message' do
+    it 'sends album batches through the instant fetch path' do
+      update = TD::Types::Update::ChatReadInbox.new(chat_id: 10, last_read_inbox_message_id: 0, unread_count: 2)
+      allow(handler).to receive(:channel_messages).and_return([message(2, 10, 777), message(1, 10, 777)])
+      allow(handler).to receive(:read_messages)
+      allow(handler).to receive(:get_media_group).and_return([message(1, 10, 777), message(2, 10, 777)])
+
+      handler.new_message(update)
+
+      expect(handler.sent_batches).to eq([[message(1, 10, 777), message(2, 10, 777)]])
+      expect(handler).to have_received(:get_media_group).once
+    end
+  end
+
   describe '#message_sending' do
     it 'is an abstract hook that must be overridden' do
       expect { DummyTelegramClient.new({}).message_sending([]) }
