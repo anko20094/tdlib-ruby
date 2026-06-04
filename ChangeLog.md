@@ -1,3 +1,10 @@
+### 3.3.3 / 2026-06-05
+
+* Scope the update-manager raw-hash fallback to TD::Types.wrap failures only;
+  callback/dispatch errors get upstream's plain "Uncaught exception" warn instead of
+  masquerading as unwrappable updates and force-feeding an already-wrapped struct
+* Translate the remaining Ukrainian comments in force_feed_raw_hash
+
 ### 3.3.2 / 2026-06-05
 
 * Remove dead extension methods with no callers: chat_ids, fetch_interaction_info,

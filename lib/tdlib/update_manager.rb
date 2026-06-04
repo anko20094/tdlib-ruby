@@ -32,17 +32,25 @@ module TD
 
     def handle_update(callback: nil)
       update = TD::Api.client_receive(@td_client, TIMEOUT)
+      return if update.nil?
 
-      unless update.nil?
-        extra  = update.delete('@extra')
+      extra = update.delete('@extra')
+
+      # Only the wrap itself may fall back to raw-hash delivery; a callback/dispatch
+      # failure would otherwise masquerade as an "unwrappable update" and force-feed
+      # an already-wrapped struct to the @extra-correlated waiter.
+      begin
         update = TD::Types.wrap(update)
-        callback&.call(update)
-
-        match_handlers!(update, extra).each { |h| h.async.run(update) }
+      rescue StandardError => e
+        log_unwrappable_update(e, extra)
+        force_feed_raw_hash(update, extra)
+        return
       end
+
+      callback&.call(update)
+      match_handlers!(update, extra).each { |h| h.async.run(update) }
     rescue StandardError => e
-      log_unwrappable_update(e, extra)
-      force_feed_raw_hash(update, extra)
+      warn("Uncaught exception in update manager: #{e.message}")
     end
 
     # An update TD::Types.wrap can't parse (e.g. a @type missing from tdlib-schema)
@@ -59,14 +67,14 @@ module TD
     end
 
     def force_feed_raw_hash(raw_update, extra)
-      return if extra.nil? # Не можемо врятувати, якщо немає 'extra' ID
+      return if extra.nil? # nothing to rescue without the '@extra' correlation id
 
-      # Знаходимо слухачів ТІЛЬКИ за 'extra', ігноруючи їх 'update_type'
+      # Match listeners by '@extra' only: the hash never wrapped, so type matching is impossible.
       @mutex.synchronize do
         matched_handlers = handlers.select { |h| h.extra == extra }
 
         matched_handlers.each do |handler|
-          # Примусово "годуємо" слухача сирим хешем
+          # Deliver the raw hash as-is; HashHelper-based consumers handle both shapes.
           handler.async.run(raw_update)
           handlers.delete(handler) if handler.disposable?
         end

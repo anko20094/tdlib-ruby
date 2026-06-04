@@ -53,5 +53,24 @@ describe TD::UpdateManager do
         expect(received.first).to be_a(TD::Types::Error)
       end
     end
+
+    context 'when the callback raises after a successful wrap' do
+      let(:raw_update) { { '@type' => 'error', '@extra' => 'req-2', 'code' => 500, 'message' => 'boom' } }
+
+      before do
+        allow(TD::Api).to receive(:client_receive).and_return(raw_update)
+      end
+
+      it 'warns plainly instead of force-feeding the wrapped object to the @extra waiter' do
+        received = []
+        manager.add_handler(TD::UpdateHandler.new(TD::Types::Base, 'req-2', disposable: true) { |u| received << u })
+
+        expect { manager.__send__(:handle_update, callback: ->(_u) { raise 'callback bug' }) }
+          .to output(/Uncaught exception in update manager: callback bug/).to_stderr
+
+        sleep 0.05
+        expect(received).to be_empty
+      end
+    end
   end
 end
