@@ -1,3 +1,13 @@
+### 3.3.1 / 2026-06-05
+
+* Normalize extension API returns to string-keyed hashes: channel_messages,
+  subscribe_to_link and forward_messages_to_bot now deep_to_hash their results,
+  restoring the raw-hash contract consumers were written against
+* HashHelper.deep_to_hash restores the TDLib '@type' key on every nesting level
+  for typed structs (Dry::Struct#to_h silently drops it)
+* group_media_groups / sort_by_id read ids via HashHelper instead of string-key
+  [] / #dig, which raise on typed TD::Types::Message structs
+
 ### 3.3.0 / 2026-06-04
 
 * Require tdlib-schema >= 1.8.64.0 (regenerated for TDLib 1.8.64) and rename

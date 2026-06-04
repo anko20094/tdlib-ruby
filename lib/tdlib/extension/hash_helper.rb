@@ -13,7 +13,9 @@ module TD
           when Hash
             obj.each_with_object({}) { |(k, v), h| h[k.to_s] = deep_to_hash(v) }
           else
-            if obj.respond_to?(:to_h)
+            if defined?(TD::Types::Base) && obj.is_a?(TD::Types::Base)
+              td_struct_to_hash(obj)
+            elsif obj.respond_to?(:to_h)
               deep_to_hash(obj.to_h)
             elsif obj.respond_to?(:to_hash)
               deep_to_hash(obj.to_hash)
@@ -31,6 +33,24 @@ module TD
           elsif structure.is_a?(Hash)
             structure[field_name.to_s] || structure[field_name.to_sym]
           end
+        end
+
+        private
+
+        # Dry::Struct#to_h deep-serializes nested structs and loses their TDLib '@type'.
+        # Walking #attributes keeps nested structs intact, so every nesting level gets its
+        # '@type' restored — the raw-hash (force-feed era) shape consumers were written against.
+        def td_struct_to_hash(struct)
+          hash = struct.attributes.each_with_object({}) { |(k, v), h| h[k.to_s] = deep_to_hash(v) }
+          type = td_type_string(struct.class)
+          hash['@type'] = type if type
+          hash
+        end
+
+        def td_type_string(klass)
+          @td_type_by_class_name ||= TD::Types::LOOKUP_TABLE
+                                     .each_with_object({}) { |(type, const), h| h["TD::Types::#{const}"] = type }
+          @td_type_by_class_name[klass.name]
         end
       end
     end

@@ -9,8 +9,9 @@ module TD
 
         link = raw_link.to_s.strip
 
-        subscribe_by_message_link(link) || subscribe_by_username_link(link) || subscribe_by_invite_link(link) ||
-          subscribe_by_channel_name(link)
+        result = subscribe_by_message_link(link) || subscribe_by_username_link(link) ||
+                 subscribe_by_invite_link(link) || subscribe_by_channel_name(link)
+        result && HashHelper.deep_to_hash(result)
       rescue TD::Error => e
         if e.message&.include?('USER_ALREADY_PARTICIPANT')
           return resolve_already_subscribed_chat(link)
@@ -35,7 +36,7 @@ module TD
                       HashHelper.get_unknown_structure_data(info, 'id')
           end
 
-          chat_id ? get_chat(chat_id) : nil
+          chat_id ? HashHelper.deep_to_hash(get_chat(chat_id)) : nil
       end
 
       def chat_ids(limit = 1000)
@@ -54,7 +55,8 @@ module TD
 
         res = @client.get_chat_history(chat_id:, from_message_id:, limit:, offset:, only_local: false).value!(15)
 
-        HashHelper.get_unknown_structure_data(res, 'messages') || []
+        messages = HashHelper.get_unknown_structure_data(res, 'messages') || []
+        messages.map { |msg| HashHelper.deep_to_hash(msg) }
       end
 
       def read_messages(chat_id, message_ids)
@@ -107,7 +109,7 @@ module TD
           'protect_content' => false
         }
 
-        @client.forward_messages(
+        result = @client.forward_messages(
           chat_id: bot_chat_id,
           from_chat_id:,
           message_ids:,
@@ -116,6 +118,8 @@ module TD
           send_copy: false,
           remove_caption: false
         ).value!(20)
+
+        result && HashHelper.deep_to_hash(result)
       rescue ArgumentError, TypeError => e
         puts "❌ Error forwarding messages: #{e.class} - #{e.message}"
 
@@ -130,10 +134,10 @@ module TD
         result = []
 
         messages.each do |m|
-          album_id = (m['media_album_id'] || m.dig('media', 'album_id')).to_s
-          if album_id && !album_id.empty? && album_id != '0'
+          album_id = HashHelper.get_unknown_structure_data(m, 'media_album_id').to_s
+          if !album_id.empty? && album_id != '0'
             album_map[album_id] ||= []
-            if seen[album_id].blank?
+            unless seen[album_id]
               result << album_map[album_id]
               seen[album_id] = true
             end
@@ -178,7 +182,7 @@ module TD
       def sort_by_id(messages)
         messages.map do |entry|
           if entry.is_a?(Array)
-            entry.sort_by { |msg| (msg['id'] || msg['message_id'] || msg.dig('message', 'id') || 0).to_i }
+            entry.sort_by { |msg| HashHelper.get_unknown_structure_data(msg, 'id').to_i }
           else
             entry
           end
