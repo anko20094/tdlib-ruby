@@ -82,7 +82,7 @@ module TD
 
         @client.send_message(
           chat_id:,
-          message_thread_id: 0,
+          topic_id: nil,
           reply_to: nil,
           options:,
           reply_markup: nil,
@@ -111,7 +111,7 @@ module TD
           chat_id: bot_chat_id,
           from_chat_id:,
           message_ids:,
-          message_thread_id: 0,
+          topic_id: nil,
           options:,
           send_copy: false,
           remove_caption: false

@@ -1,3 +1,13 @@
+### 3.3.0 / 2026-06-04
+
+* Require tdlib-schema >= 1.8.64.0 (regenerated for TDLib 1.8.64) and rename
+  `message_thread_id:` to `topic_id:` in send_message/forward_messages calls
+* Log updates that TD::Types.wrap cannot parse before falling back to raw-hash delivery
+  (unknown @type from a newer core is no longer swallowed silently)
+* Surface auth-step failures: set_authentication_phone_number errors are logged and re-raised;
+  check/resend code failures are logged
+* Map WaitOtherDeviceConfirmation in AUTH_STATE_MAP (QR wait state no longer reported as unknown)
+
 ### 3.0.4 / 2024-09-05
 
 * Change ffi gem version to '~> 1.15.0'
