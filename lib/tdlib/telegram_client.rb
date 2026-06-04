@@ -20,7 +20,8 @@ module TD
       setup_directories
 
       @client = TD::Client.new(database_directory: params[:database_directory] || './tdlib_database',
-                               files_directory: @media_directory)
+                               files_directory: @media_directory,
+                               **{ api_id: params[:api_id], api_hash: params[:api_hash] }.compact)
 
       setup_handlers
     end
