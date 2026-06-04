@@ -40,14 +40,22 @@ module TD
 
         match_handlers!(update, extra).each { |h| h.async.run(update) }
       end
-    rescue StandardError
-      # if e.message.include?('is missing in Hash input') ||
-      #     e.message.include?("Can't find class") ||
-
+    rescue StandardError => e
+      log_unwrappable_update(e, extra)
       force_feed_raw_hash(update, extra)
-      # else
-      #   warn("Uncaught exception in update manager: #{e.message}")
-      # end
+    end
+
+    # An update TD::Types.wrap can't parse (e.g. a @type missing from tdlib-schema)
+    # must never vanish silently — the @type is in the error message.
+    def log_unwrappable_update(error, extra)
+      message = "TDLib update dropped to raw-hash delivery (extra=#{extra.inspect}): " \
+                "#{error.class}: #{error.message}"
+
+      if defined?(Rails) && Rails.respond_to?(:logger) && Rails.logger
+        Rails.logger.warn(message)
+      else
+        warn(message)
+      end
     end
 
     def force_feed_raw_hash(raw_update, extra)

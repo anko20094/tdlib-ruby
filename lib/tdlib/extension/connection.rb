@@ -4,6 +4,7 @@ module TD
       AUTH_STATE_MAP = {
         'WaitTdlibParameters' => :wait_tdlib_parameters,
         'WaitPhoneNumber' => :wait_phone_number,
+        'WaitOtherDeviceConfirmation' => :wait_other_device_confirmation,
         'WaitCode' => :wait_code,
         'WaitPassword' => :wait_password,
         'Ready' => :ready
@@ -81,10 +82,12 @@ module TD
         end
       end
 
+      # A failed code request must halt the auth flow loudly, not strand it in WaitPhoneNumber.
       def handle_phone_number
         @client.set_authentication_phone_number(phone_number: @phone, settings: nil).value!
       rescue StandardError => e
-        puts "❌ Failed to request code: #{e.message}"
+        log_auth_error("Failed to request code for #{@phone}", e)
+        raise
       end
 
       def handle_code
@@ -100,7 +103,7 @@ module TD
 
         @client.check_authentication_code(code:).value!
       rescue StandardError => e
-        puts "❌ Code check failed: #{e.message}"
+        log_auth_error('Code check failed', e)
         @auth_state = :wait_code
       end
 
@@ -124,9 +127,17 @@ module TD
         @client.resend_authentication_code(reason: nil).value!
         puts '🔁 Code resent.'
       rescue StandardError => e
-        puts "❌ Resend failed: #{e.message}"
+        log_auth_error('Resend failed', e)
       ensure
         @auth_state = :wait_code
+      end
+
+      # Interactive visibility (stdout) plus a persistent trace (Rails log when available)
+      def log_auth_error(prefix, error)
+        puts "❌ #{prefix}: #{error.message}"
+        return unless defined?(Rails) && Rails.respond_to?(:logger) && Rails.logger
+
+        Rails.logger.error("[TD auth] #{prefix}: #{error.message}")
       end
 
       def handle_password
