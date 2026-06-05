@@ -1,3 +1,14 @@
+### 3.4.1 / 2026-06-05
+
+* QR login: reprint the fresh tg://login link (and QR) on every Telegram token
+  rotation (~30s) — previously the link was printed once and went stale, so any
+  scan/click slower than the first rotation silently failed
+* handle_qr_login awaits the requestQrCodeAuthentication result and halts loudly
+  on failure (e.g. FLOOD_WAIT) instead of waiting forever for a token that never came
+* handle_password awaits the password check: a wrong 2FA password is reported and
+  re-prompted instead of being silently swallowed; a blank password no longer hangs
+  the auth loop
+
 ### 3.4.0 / 2026-06-05
 
 * Instant media-group delivery (DNA-1124): new ApiMethods#get_media_group collects the

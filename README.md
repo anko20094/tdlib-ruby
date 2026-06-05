@@ -296,4 +296,6 @@ Constructor params: `phone:`, `database_directory:` (default `./tdlib_database`)
 `TD.config.client` values. Both directories are created on initialization.
 
 Interactive auth (`Connection`) asks for the SMS/app code in the terminal (`r` resends
-the code) and for the 2FA password when required.
+the code) and for the 2FA password when required. QR login (`by_qr: true`) reprints the
+fresh `tg://login` link and QR code on every Telegram token rotation (~30s) — always
+scan/click the newest one printed.

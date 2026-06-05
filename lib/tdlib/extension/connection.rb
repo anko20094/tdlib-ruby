@@ -25,6 +25,8 @@ module TD
             puts "⚠️  Unknown state: #{state_name}"
             @auth_state = :unknown
           end
+
+          display_qr_link(update.authorization_state) if mapped == :wait_other_device_confirmation
         end
       end
 
@@ -51,34 +53,38 @@ module TD
 
       private
 
+      # A failed QR request must halt the auth flow loudly, not strand it in WaitPhoneNumber.
+      # The link itself is printed by the AuthorizationState handler on every token rotation.
       def handle_qr_login
         puts "\n========================================"
-        puts "🚀  Qr-code login initiated"
-        puts "========================================"
-        @client.request_qr_code_authentication(other_user_ids: [])
+        puts '🚀  Qr-code login initiated'
+        puts '========================================'
+        @client.request_qr_code_authentication(other_user_ids: []).value!
+      rescue StandardError => e
+        log_auth_error('QR login request failed', e)
+        raise
+      end
 
-        sleep 4
+      # Telegram rotates the QR token every ~30 seconds and TDLib pushes each fresh link
+      # through updateAuthorizationState; reprint it every time so the link on screen is
+      # never a stale token (scanning or clicking an expired one silently does nothing).
+      def display_qr_link(auth_state)
+        link = auth_state.respond_to?(:link) ? auth_state.link.to_s : ''
+        return if link.empty? || link == @last_qr_link
 
-        begin
-          auth_state = @client.get_authorization_state.value!
+        @last_qr_link = link
+        puts "\n🔗 Link:"
+        puts link
+        print_qr_code(link)
+      end
 
-          if auth_state.respond_to?(:link)
-            link = auth_state.link
-
-            puts "\n🔗 Link:"
-            puts link
-            puts "\n📸 Scan qr code below:"
-            if system("which qrencode > /dev/null 2>&1")
-              system('qrencode', '-t', 'ANSIUTF8', link)
-            else
-              puts "❌ Utility 'qrencode' not found. Install it: sudo apt install qrencode"
-              puts "Or open the link above in a QR generator."
-            end
-          else
-            puts "⚠️  Link dont ready. State: #{auth_state.class}"
-          end
-        rescue => e
-          puts "❌ Error while getting QR-code: #{e.message}"
+      def print_qr_code(link)
+        puts "\n📸 Scan qr code below:"
+        if system('which qrencode > /dev/null 2>&1')
+          system('qrencode', '-t', 'ANSIUTF8', link)
+        else
+          puts "❌ Utility 'qrencode' not found. Install it: sudo apt install qrencode"
+          puts 'Or open the link above in a QR generator.'
         end
       end
 
@@ -140,14 +146,20 @@ module TD
         Rails.logger.error("[TD auth] #{prefix}: #{error.message}")
       end
 
+      # Awaits the check: a swallowed PASSWORD_HASH_INVALID used to leave the flow
+      # spinning with zero feedback. Any failure re-arms :wait_password for a re-prompt.
       def handle_password
         print '🔐 [Action] Enter 2FA password: '
         password = $stdin.gets&.strip
         if password.nil? || password.empty?
           puts '❌ Password is blank.'
+          @auth_state = :wait_password
           return
         end
-        @client.check_authentication_password(password: password)
+        @client.check_authentication_password(password: password).value!
+      rescue StandardError => e
+        log_auth_error('Password check failed', e)
+        @auth_state = :wait_password
       end
 
       def connect
