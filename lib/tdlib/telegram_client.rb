@@ -22,7 +22,13 @@ module TD
 
       @client = TD::Client.new(database_directory: @database_directory,
                                files_directory: @media_directory,
-                               **{ api_id: params[:api_id], api_hash: params[:api_hash] }.compact)
+                               **{
+                                 api_id: params[:api_id],
+                                 api_hash: params[:api_hash],
+                                 device_model: params[:device_model],
+                                 system_version: params[:system_version],
+                                 application_version: params[:application_version]
+                               }.compact)
 
       setup_handlers
     end
