@@ -50,6 +50,22 @@ module TD
         messages.map { |msg| HashHelper.deep_to_hash(msg) }
       end
 
+      # Pull each message into THIS session before it is forwarded. forwardMessages silently returns
+      # null for any message the current TDLib session never loaded — e.g. flow content captured by the
+      # listener session but forwarded by a separate executor session — which turns resend into a no-op.
+      # getMessage fetches from the server (member access is enough), so the later forward resolves.
+      def get_messages(chat_id, message_ids)
+        return [] if logged_out?
+
+        Array(message_ids).filter_map do |message_id|
+          res = @client.get_message(chat_id:, message_id:).value!(15)
+          res && HashHelper.deep_to_hash(res)
+        rescue TD::Error => e
+          puts "⚠️ [API] get_message failed for #{chat_id}/#{message_id}: #{e.message}"
+          nil
+        end
+      end
+
       # Returns every part of the anchor's media album as normalized hashes sorted by id.
       # A Telegram album is published atomically with adjacent message ids, so one history
       # slice anchored at any known part covers the whole group (DNA-1124).
@@ -113,6 +129,10 @@ module TD
 
         bot_chat_id = resolve_chat_id(bot)
         return if bot_chat_id.nil?
+
+        # Load the source messages into this session first; without it forwardMessages no-ops on
+        # cross-session (flow) content and the bot file is never minted (DNA-1173 hop3).
+        get_messages(from_chat_id, message_ids)
 
         options = {
           '@type' => 'messageSendOptions',

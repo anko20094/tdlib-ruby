@@ -94,6 +94,10 @@ describe TD::Extension::ApiMethods do
   end
 
   describe '#forward_messages_to_bot' do
+    let(:message_future) { double('Future', value!: typed(1, 10, 0)) }
+
+    before { allow(client).to receive(:get_message).and_return(message_future) }
+
     it 'normalizes the typed Messages result so callers can read result[messages]' do
       result = TD::Types::Messages.new(total_count: 0, messages: [])
       future = double('Future', value!: result)
@@ -101,6 +105,43 @@ describe TD::Extension::ApiMethods do
 
       expect(harness.forward_messages_to_bot(555, 10, [1]))
         .to eq('@type' => 'messages', 'total_count' => 0, 'messages' => [])
+    end
+
+    it 'preloads every source message into the session before forwarding' do
+      result = TD::Types::Messages.new(total_count: 0, messages: [])
+      allow(client).to receive(:forward_messages).and_return(double('Future', value!: result))
+
+      harness.forward_messages_to_bot(555, 10, [1, 2])
+
+      expect(client).to have_received(:get_message).with(chat_id: 10, message_id: 1)
+      expect(client).to have_received(:get_message).with(chat_id: 10, message_id: 2)
+    end
+  end
+
+  describe '#get_messages' do
+    it 'normalizes each fetched message into a string-keyed hash' do
+      allow(client).to receive(:get_message).with(chat_id: 10, message_id: 1)
+        .and_return(double('Future', value!: typed(1, 10, 0)))
+      allow(client).to receive(:get_message).with(chat_id: 10, message_id: 2)
+        .and_return(double('Future', value!: typed(2, 10, 777)))
+
+      expect(harness.get_messages(10, [1, 2])).to eq([hash_msg(1, 10, 0), hash_msg(2, 10, 777)])
+    end
+
+    it 'skips ids whose getMessage raises and keeps the rest' do
+      allow(client).to receive(:get_message).with(chat_id: 10, message_id: 1)
+        .and_raise(TD::Error.new(TD::Types::Error.new(code: 5, message: 'Message not found')))
+      allow(client).to receive(:get_message).with(chat_id: 10, message_id: 2)
+        .and_return(double('Future', value!: typed(2, 10, 0)))
+
+      expect { expect(harness.get_messages(10, [1, 2])).to eq([hash_msg(2, 10, 0)]) }
+        .to output(/get_message failed for 10\/1/).to_stdout
+    end
+
+    it 'returns [] when the client is not logged in' do
+      logged_out = ApiMethodsSpec::Harness.new(client, auth_ready: false)
+
+      expect { expect(logged_out.get_messages(10, [1])).to eq([]) }.to output(/not logged in/).to_stdout
     end
   end
 
