@@ -96,17 +96,15 @@ module TD
         @client.view_messages(chat_id:, message_ids:, force_read: true, source: nil).value!
       end
 
-      def start_chat_with_bot(bot)
+      # DNA-1209: an optional deep-link payload ("/start <payload>") lets a non-production userbot
+      # self-register with the production mother bot. Production always sends a bare "/start" (the
+      # payload is dropped there), so the same call is safe in every environment.
+      def start_chat_with_bot(bot, payload = nil)
         return if logged_out?
 
         chat_id = resolve_chat_id(bot)
         return if chat_id.nil?
 
-        input = {
-          '@type' => 'inputMessageText',
-          'text' => { '@type' => 'formattedText', 'text' => '/start' },
-          'disable_web_page_preview' => true
-        }
         options = {
           '@type' => 'messageSendOptions',
           'disable_notification' => false,
@@ -120,7 +118,7 @@ module TD
           reply_to: nil,
           options:,
           reply_markup: nil,
-          input_message_content: input
+          input_message_content: start_message_content(payload)
         ).value!(15)
       end
 
@@ -189,6 +187,28 @@ module TD
       end
 
       private
+
+      def start_message_content(payload)
+        {
+          '@type' => 'inputMessageText',
+          'text' => { '@type' => 'formattedText', 'text' => start_command(payload) },
+          'disable_web_page_preview' => true
+        }
+      end
+
+      # A deep-link "/start <payload>" only fires outside production (e.g. a dev/staging userbot
+      # self-registering with the production mother bot); production always sends a bare "/start".
+      def start_command(payload)
+        return '/start' if payload.to_s.empty? || production_environment?
+
+        "/start #{payload}"
+      end
+
+      def production_environment?
+        return Rails.env.production? if defined?(Rails) && Rails.respond_to?(:env)
+
+        ENV['RAILS_ENV'].to_s == 'production' || ENV['RACK_ENV'].to_s == 'production'
+      end
 
       def resolve_chat_id(target)
         return if logged_out?
