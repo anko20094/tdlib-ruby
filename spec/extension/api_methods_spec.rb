@@ -118,6 +118,37 @@ describe TD::Extension::ApiMethods do
     end
   end
 
+  describe '#start_chat_with_bot' do
+    let(:captured) { {} }
+
+    before do
+      allow(client).to receive(:send_message) do |**kwargs|
+        captured[:content] = kwargs[:input_message_content]
+        double('Future', value!: TD::Types::Ok.new)
+      end
+    end
+
+    it 'sends a bare /start when no payload is given' do
+      harness.start_chat_with_bot(123)
+
+      expect(captured[:content].dig('text', 'text')).to eq('/start')
+    end
+
+    it 'sends /start <payload> outside production' do
+      harness.start_chat_with_bot(123, 'userbot-foreign-7')
+
+      expect(captured[:content].dig('text', 'text')).to eq('/start userbot-foreign-7')
+    end
+
+    it 'drops the payload in production' do
+      allow(harness).to receive(:production_environment?).and_return(true)
+
+      harness.start_chat_with_bot(123, 'userbot-foreign-7')
+
+      expect(captured[:content].dig('text', 'text')).to eq('/start')
+    end
+  end
+
   describe '#get_messages' do
     it 'normalizes each fetched message into a string-keyed hash' do
       allow(client).to receive(:get_message).with(chat_id: 10, message_id: 1)
