@@ -11,15 +11,13 @@ module TD
 
         link = raw_link.to_s.strip
 
-        result = subscribe_by_message_link(link) || subscribe_by_username_link(link) ||
-                 subscribe_by_invite_link(link) || subscribe_by_channel_name(link)
-        result && HashHelper.deep_to_hash(result)
+        subscribe_by_message_link(link) || subscribe_by_username_link(link) ||
+          subscribe_by_invite_link(link) || subscribe_by_channel_name(link)
       rescue TD::Error => e
-        if e.message&.include?('USER_ALREADY_PARTICIPANT')
-          return resolve_already_subscribed_chat(link)
-        end
+        raise unless e.message&.include?('USER_ALREADY_PARTICIPANT')
 
-        raise
+        already = resolve_already_subscribed_chat(link)
+        already && joined_from(already)
       end
 
       def resolve_already_subscribed_chat(link)
@@ -233,51 +231,121 @@ module TD
       end
 
       def subscribe_by_message_link(link)
-        if (m = link.match(%r{t\.me/c/(\d+)/\d+}))
-          short_id = m[1].to_i
-          chat_id = CHAT_ID_OFFSET - short_id
+        return unless (m = link.match(%r{t\.me/c/(\d+)/\d+}))
 
-          @client.join_chat(chat_id:).value!(20)
-        end
+        chat_id = CHAT_ID_OFFSET - m[1].to_i
+        join_outcome(@client.join_chat(chat_id:).value!(20), chat_id:)
       end
 
       def subscribe_by_username_link(link)
         m = link.match(%r{(?:tg://resolve\?domain=|https?://(?:www\.)?(?:t\.me|telegram\.me)/)@?([A-Za-z0-9_]{5,32})})
-        if m
-          username = m[1]
-          chat = @client.search_public_chat(username:).value!(15)
-          id = HashHelper.get_unknown_structure_data(chat, 'id')
-          return if chat.nil? || id.nil?
+        return if m.nil?
 
-          @client.join_chat(chat_id: id).value!(20)
-        end
-        nil
+        chat = @client.search_public_chat(username: m[1]).value!(15)
+        id = HashHelper.get_unknown_structure_data(chat, 'id')
+        return if id.nil?
+
+        join_outcome(@client.join_chat(chat_id: id).value!(20), chat:)
       end
 
       def subscribe_by_invite_link(link)
-        if (m = link.match(%r{(?:t\.me/joinchat/|t\.me/\+|tg://join\?invite=)([A-Za-z0-9_-]+)}))
-          invite_code = m[1]
-          invite_link = link.include?('http') ? link : "https://t.me/joinchat/#{invite_code}"
-          @client.check_chat_invite_link(invite_link:).value!(15)
+        return unless (m = link.match(%r{(?:t\.me/joinchat/|t\.me/\+|tg://join\?invite=)([A-Za-z0-9_-]+)}))
 
-          @client.join_chat_by_invite_link(invite_link:).value!(20)
-        end
+        invite_link = link.include?('http') ? link : "https://t.me/joinchat/#{m[1]}"
+        invite_info = @client.check_chat_invite_link(invite_link:).value!(15)
+
+        join_outcome(@client.join_chat_by_invite_link(invite_link:).value!(20), invite_info:)
       end
 
       def subscribe_by_channel_name(username)
         clean_username = username.gsub('@', '').strip
-        return nil if clean_username.include?('/') || clean_username.empty?
+        return if clean_username.include?('/') || clean_username.empty?
 
-        chat = begin
-                 @client.search_public_chat(username: clean_username).value!
-               rescue TD::Error
-                 nil
-               end
-        return if chat.nil?
+        chat = search_public_chat_safe(clean_username)
+        id = HashHelper.get_unknown_structure_data(chat, 'id')
+        return if id.nil?
 
-        @client.join_chat(chat_id: HashHelper.get_unknown_structure_data(chat, 'id')).value!
+        join_outcome(@client.join_chat(chat_id: id).value!, chat:)
+      end
 
-        chat
+      # DNA-1235 Phase 0 (valuable already on 1.8.64): only "no such username" degrades to nil; floodwait /
+      # transient errors must propagate so MainService#with_operation classifies + retries them (mirrors
+      # resolve_chat_id). The old bare `rescue TD::Error → nil` collapsed a floodwait into a dead source.
+      def search_public_chat_safe(username)
+        @client.search_public_chat(username:).value!
+      rescue TD::Error => e
+        raise unless e.message.to_s.match?(/USERNAME_INVALID|USERNAME_NOT_OCCUPIED/)
+
+        nil
+      end
+
+      # DNA-1235: normalize the 1.8.65 ChatJoinResult union into an outcome-keyed hash the app reads
+      # version-agnostically (no TD::Types::ChatJoinResult constant anywhere → no NameError on any schema).
+      # nil is reserved for a genuine dead link (no subscribe_by_* matched).
+      def join_outcome(join_result, chat: nil, chat_id: nil, invite_info: nil)
+        case chat_join_result_variant(join_result)
+        when :success then joined_outcome(join_result, chat:, chat_id:)
+        when :request_sent then request_sent_outcome(chat:, invite_info:)
+        when :guard then guard_outcome(join_result, chat:, invite_info:)
+        when :declined then { 'outcome' => 'declined' }
+        else legacy_joined(join_result, chat:) # 1.8.64 core (Ok/Chat) or an already-member chat payload
+        end
+      end
+
+      def chat_join_result_variant(res)
+        name = res.class.name.to_s
+        return :legacy unless name.include?('ChatJoinResult')
+
+        { 'Success' => :success, 'RequestSent' => :request_sent,
+          'GuardBotApprovalRequired' => :guard, 'Declined' => :declined }[name.split('::').last] || :legacy
+      end
+
+      def joined_outcome(res, chat: nil, chat_id: nil)
+        chat ||= resolve_chat_safe(chat_id || HashHelper.get_unknown_structure_data(res, 'chat_id'))
+        joined_from(chat)
+      end
+
+      def joined_from(chat)
+        h = HashHelper.deep_to_hash(chat)
+        { 'outcome' => 'joined', 'id' => h['id'], 'title' => h['title'], 'type' => h['type'] }
+      end
+
+      # DNA-1208 mirror: a floodwait/timeout resolving the chat must not discard an already-successful join.
+      def resolve_chat_safe(chat_id)
+        return {} if chat_id.to_i.zero?
+
+        HashHelper.deep_to_hash(get_chat(chat_id))
+      rescue TD::Error
+        { 'id' => chat_id }
+      end
+
+      def request_sent_outcome(chat: nil, invite_info: nil)
+        { 'outcome' => 'request_sent' }.merge(identity_from(chat || invite_info))
+      end
+
+      def guard_outcome(res, chat: nil, invite_info: nil)
+        { 'outcome' => 'guard_required',
+          'bot_user_id' => HashHelper.get_unknown_structure_data(res, 'bot_user_id'),
+          'query_id' => HashHelper.get_unknown_structure_data(res, 'query_id') }
+          .merge(identity_from(chat || invite_info))
+      end
+
+      # check_chat_invite_link returns chat_id 0 for an approval-gated chat you have not joined — treat 0 as
+      # unknown so the app does not persist a bogus source_id (DNA-1235).
+      def identity_from(source)
+        return {} if source.nil?
+
+        h = HashHelper.deep_to_hash(source)
+        chat_id = h['id'] || h['chat_id']
+        { 'id' => (chat_id.to_i.zero? ? nil : chat_id), 'title' => h['title'] }.compact
+      end
+
+      # 1.8.64 core (join_chat → Ok, join_chat_by_invite_link → Chat) or an already-member chat → joined.
+      def legacy_joined(res, chat: nil)
+        h = HashHelper.deep_to_hash(chat || res)
+        return joined_from(h) if h.is_a?(Hash) && !h['id'].nil?
+
+        { 'outcome' => 'joined' }
       end
 
       # offset -9 / limit 19 reaches up to 9 newer and 9 older neighbours of the anchor:
