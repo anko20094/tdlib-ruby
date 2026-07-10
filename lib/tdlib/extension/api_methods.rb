@@ -14,7 +14,7 @@ module TD
         subscribe_by_message_link(link) || subscribe_by_username_link(link) ||
           subscribe_by_invite_link(link) || subscribe_by_channel_name(link)
       rescue TD::Error => e
-        raise unless e.message&.include?('USER_ALREADY_PARTICIPANT')
+        raise if e.message.nil? || !e.message.include?('USER_ALREADY_PARTICIPANT')
 
         already = resolve_already_subscribed_chat(link)
         already && joined_from(already)
@@ -238,10 +238,10 @@ module TD
       end
 
       def subscribe_by_username_link(link)
-        m = link.match(%r{(?:tg://resolve\?domain=|https?://(?:www\.)?(?:t\.me|telegram\.me)/)@?([A-Za-z0-9_]{5,32})})
-        return if m.nil?
+        matched_link = link.match(%r{(?:tg://resolve\?domain=|https?://(?:www\.)?(?:t\.me|telegram\.me)/)@?([A-Za-z0-9_]{5,32})})
+        return if matched_link.nil?
 
-        chat = @client.search_public_chat(username: m[1]).value!(15)
+        chat = @client.search_public_chat(username: matched_link[1]).value!(15)
         id = HashHelper.get_unknown_structure_data(chat, 'id')
         return if id.nil?
 
@@ -307,6 +307,7 @@ module TD
 
       def joined_from(chat)
         h = HashHelper.deep_to_hash(chat)
+
         { 'outcome' => 'joined', 'id' => h['id'], 'title' => h['title'], 'type' => h['type'] }
       end
 
@@ -324,10 +325,13 @@ module TD
       end
 
       def guard_outcome(res, chat: nil, invite_info: nil)
-        { 'outcome' => 'guard_required',
+        outcome_hash = {
+          'outcome' => 'guard_required',
           'bot_user_id' => HashHelper.get_unknown_structure_data(res, 'bot_user_id'),
-          'query_id' => HashHelper.get_unknown_structure_data(res, 'query_id') }
-          .merge(identity_from(chat || invite_info))
+          'query_id' => HashHelper.get_unknown_structure_data(res, 'query_id')
+        }
+
+        outcome_hash.merge(identity_from(chat || invite_info))
       end
 
       # check_chat_invite_link returns chat_id 0 for an approval-gated chat you have not joined — treat 0 as
@@ -337,6 +341,7 @@ module TD
 
         h = HashHelper.deep_to_hash(source)
         chat_id = h['id'] || h['chat_id']
+
         { 'id' => (chat_id.to_i.zero? ? nil : chat_id), 'title' => h['title'] }.compact
       end
 

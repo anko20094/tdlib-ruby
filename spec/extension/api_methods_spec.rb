@@ -22,6 +22,16 @@ module ApiMethodsSpec
       @auth_ready = auth_ready
     end
   end
+
+  # Stand-ins for the 1.8.65 ChatJoinResult union. The pinned tdlib-schema (1.8.64) has no such
+  # constants, and join_outcome classifies purely on the class name — so these reproduce the exact
+  # dispatch the gem will see once the schema is regenerated, without depending on it.
+  module ChatJoinResult
+    Success = Struct.new(:chat_id, keyword_init: true)
+    RequestSent = Struct.new(:dummy, keyword_init: true)
+    GuardBotApprovalRequired = Struct.new(:bot_user_id, :query_id, keyword_init: true)
+    Declined = Struct.new(:dummy, keyword_init: true)
+  end
 end
 
 describe TD::Extension::ApiMethods do
@@ -85,11 +95,128 @@ describe TD::Extension::ApiMethods do
   end
 
   describe '#subscribe_to_link' do
-    it 'returns a string-keyed hash with @type for a typed join result' do
-      future = double('Future', value!: TD::Types::Ok.new)
-      allow(client).to receive(:join_chat).with(chat_id: -1_000_000_000_123).and_return(future)
+    let(:chat) { { 'id' => -100_123, 'title' => 'Channel', 'type' => { '@type' => 'chatTypeSupergroup' } } }
 
-      expect(harness.subscribe_to_link('https://t.me/c/123/45')).to eq('@type' => 'ok')
+    def future(value)
+      double('Future', value!: value)
+    end
+
+    def td_error(message)
+      TD::Error.new(TD::Types::Error.new(code: 400, message: message))
+    end
+
+    def joined(id: -100_123, title: 'Channel', type: { '@type' => 'chatTypeSupergroup' })
+      { 'outcome' => 'joined', 'id' => id, 'title' => title, 'type' => type }
+    end
+
+    # 1.8.64 core: join_chat → Ok, join_chat_by_invite_link → Chat. Neither is a ChatJoinResult,
+    # so both must still classify as a plain join.
+    context 'with a legacy (1.8.64) join result' do
+      it 'reports joined for a bare Ok, which carries no chat identity' do
+        allow(client).to receive(:join_chat).with(chat_id: -1_000_000_000_123).and_return(future(TD::Types::Ok.new))
+
+        expect(harness.subscribe_to_link('https://t.me/c/123/45')).to eq('outcome' => 'joined')
+      end
+
+      it 'reports joined with identity when the core returns the chat itself' do
+        allow(client).to receive(:check_chat_invite_link).and_return(future('chat_id' => -100_123))
+        allow(client).to receive(:join_chat_by_invite_link).and_return(future(chat))
+
+        expect(harness.subscribe_to_link('https://t.me/+AbCdEf123')).to eq(joined)
+      end
+    end
+
+    context 'with a 1.8.65 ChatJoinResult union' do
+      let(:success) { ApiMethodsSpec::ChatJoinResult::Success.new(chat_id: -100_123) }
+      let(:request_sent) { ApiMethodsSpec::ChatJoinResult::RequestSent.new }
+      let(:declined) { ApiMethodsSpec::ChatJoinResult::Declined.new }
+      let(:guard) { ApiMethodsSpec::ChatJoinResult::GuardBotApprovalRequired.new(bot_user_id: 7, query_id: 99) }
+
+      before { allow(client).to receive(:search_public_chat).with(username: 'durovchannel').and_return(future(chat)) }
+
+      it 'resolves Success through the chat the link already gave us' do
+        allow(client).to receive(:join_chat).with(chat_id: -100_123).and_return(future(success))
+
+        expect(harness.subscribe_to_link('https://t.me/durovchannel')).to eq(joined)
+      end
+
+      it 'resolves Success via get_chat when only the union carries the chat_id' do
+        allow(client).to receive(:join_chat).with(chat_id: -1_000_000_000_123).and_return(future(success))
+        allow(client).to receive(:get_chat).with(chat_id: -1_000_000_000_123).and_return(future(chat))
+
+        expect(harness.subscribe_to_link('https://t.me/c/123/45')).to eq(joined)
+      end
+
+      # DNA-1208 mirror: the join already succeeded server-side; a flood wait on the follow-up
+      # get_chat must not downgrade it to a failure.
+      it 'keeps a Success joined when get_chat floods out, degrading to the id alone' do
+        allow(client).to receive(:join_chat).with(chat_id: -1_000_000_000_123).and_return(future(success))
+        allow(client).to receive(:get_chat).and_raise(td_error('Too Many Requests: retry after 5'))
+
+        expect(harness.subscribe_to_link('https://t.me/c/123/45'))
+          .to eq(joined(id: -1_000_000_000_123, title: nil, type: nil))
+      end
+
+      it 'reports request_sent with the chat identity for a join-request channel' do
+        allow(client).to receive(:join_chat).with(chat_id: -100_123).and_return(future(request_sent))
+
+        expect(harness.subscribe_to_link('https://t.me/durovchannel'))
+          .to eq('outcome' => 'request_sent', 'id' => -100_123, 'title' => 'Channel')
+      end
+
+      it 'reports guard_required with the bot to approve through' do
+        allow(client).to receive(:join_chat).with(chat_id: -100_123).and_return(future(guard))
+
+        expect(harness.subscribe_to_link('https://t.me/durovchannel'))
+          .to eq('outcome' => 'guard_required', 'bot_user_id' => 7, 'query_id' => 99,
+                 'id' => -100_123, 'title' => 'Channel')
+      end
+
+      # checkChatInviteLink reports chat_id 0 for an approval-gated chat you are not in yet;
+      # persisting that as a source id would poison the app's chat table.
+      it 'drops the chat_id 0 an approval-gated invite link reports' do
+        allow(client).to receive(:check_chat_invite_link).and_return(future('chat_id' => 0, 'title' => 'Secret'))
+        allow(client).to receive(:join_chat_by_invite_link).and_return(future(guard))
+
+        expect(harness.subscribe_to_link('https://t.me/+AbCdEf123'))
+          .to eq('outcome' => 'guard_required', 'bot_user_id' => 7, 'query_id' => 99, 'title' => 'Secret')
+      end
+
+      it 'reports declined without inventing an identity' do
+        allow(client).to receive(:join_chat).with(chat_id: -100_123).and_return(future(declined))
+
+        expect(harness.subscribe_to_link('https://t.me/durovchannel')).to eq('outcome' => 'declined')
+      end
+    end
+
+    # Only join_chat_by_invite_link raises this — rejoining a public chat via join_chat is a plain Ok.
+    context 'when already a participant' do
+      before do
+        allow(client).to receive(:search_public_chat).and_raise(td_error('USERNAME_INVALID'))
+        allow(client).to receive(:check_chat_invite_link).and_return(future('chat_id' => -100_123))
+        allow(client).to receive(:join_chat_by_invite_link).and_raise(td_error('USER_ALREADY_PARTICIPANT'))
+      end
+
+      it 'wraps the resolved chat into the joined outcome instead of raising' do
+        allow(client).to receive(:get_chat).with(chat_id: -100_123).and_return(future(chat))
+
+        expect(harness.subscribe_to_link('https://t.me/+AbCdEf123')).to eq(joined)
+      end
+    end
+
+    context 'resolving a bare channel name' do
+      it 'returns nil for a username nobody occupies' do
+        allow(client).to receive(:search_public_chat).and_raise(td_error('USERNAME_NOT_OCCUPIED'))
+
+        expect(harness.subscribe_to_link('@ghostchannel')).to be_nil
+      end
+
+      # A bare `rescue TD::Error → nil` here used to tombstone a live source on a flood wait.
+      it 're-raises a flood wait so the caller can classify and retry it' do
+        allow(client).to receive(:search_public_chat).and_raise(td_error('Too Many Requests: retry after 5'))
+
+        expect { harness.subscribe_to_link('@busychannel') }.to raise_error(TD::Error, /Too Many Requests/)
+      end
     end
   end
 
